@@ -1,6 +1,9 @@
+import json
 import logging
 import smtplib
 import socket
+import urllib.error
+import urllib.request
 from email.message import EmailMessage
 
 from app.core.config import settings
@@ -26,11 +29,45 @@ def _resolve_v4(host: str, port: int) -> str:
         return host
 
 
-def send_email(to: str, subject: str, body: str) -> bool:
-    logger.info("Sending email to %s: %s", to, subject)
-    if not settings.smtp_host:
-        logger.warning("SMTP not configured — email logged only")
+def _resend_sender() -> str:
+    if settings.resend_from:
+        return settings.resend_from
+    # Fresh Resend accounts can send test mail from the built-in sender without
+    # verifying a domain. EMAIL_FROM is a Gmail address we can never verify here.
+    return "Sentinel <onboarding@resend.dev>"
+
+
+def _send_resend(to: str, subject: str, body: str) -> bool:
+    payload = {
+        "from": _resend_sender(),
+        "to": [to],
+        "subject": subject,
+        "text": body,
+    }
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(payload).encode(),
+        headers={
+            "Authorization": f"Bearer {settings.resend_api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "sentinel/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            logger.info("Email sent successfully to %s via Resend (HTTP %s)", to, resp.status)
+            return True
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:400]
+        logger.error("Resend send failed: HTTP %s: %s", e.code, detail)
         return False
+    except Exception as e:
+        logger.error("Email send failed: %s: %s", type(e).__name__, e)
+        return False
+
+
+def _send_smtp(to: str, subject: str, body: str) -> bool:
     msg = EmailMessage()
     msg.set_content(body)
     msg["Subject"] = subject
@@ -64,3 +101,13 @@ def send_email(to: str, subject: str, body: str) -> bool:
             logger.error("Email transport %s:%s failed: %s:%s", mode, port, type(e).__name__, e)
     logger.error("All SMTP transports failed (%s) — email NOT sent to %s", ", ".join(errors), to)
     return False
+
+
+def send_email(to: str, subject: str, body: str) -> bool:
+    logger.info("Sending email to %s: %s", to, subject)
+    if not settings.resend_api_key and not settings.smtp_host:
+        logger.warning("No email transport configured — email logged only")
+        return False
+    if settings.resend_api_key:
+        return _send_resend(to, subject, body)
+    return _send_smtp(to, subject, body)

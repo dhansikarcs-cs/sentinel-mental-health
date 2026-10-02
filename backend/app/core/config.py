@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     email_from: str = "sentinel@example.com"
     crisis_helpline_email: str = ""
 
+    resend_api_key: str = ""
+    resend_from: str = ""
+
     cors_origins: str = "http://localhost:5173"
     cookie_secure: bool = False
 
