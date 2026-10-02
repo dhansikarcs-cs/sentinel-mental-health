@@ -18,7 +18,7 @@ router = APIRouter(prefix="/emotions", tags=["emotions"])
 def get_emotion_timeline(
     username: str,
     days: int = 30,
-    user: User = Depends(require_role("psychologist")),
+    user: User = Depends(require_role("psychologist", "admin")),
     db: Session = Depends(get_db),
 ):
     from datetime import datetime, timedelta

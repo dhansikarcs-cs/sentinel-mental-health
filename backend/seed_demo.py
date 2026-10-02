@@ -28,6 +28,7 @@ from app.models.booking import Booking
 from app.models.clinical_note import ClinicalNote
 from app.models.crisis import CrisisState
 from app.models.followup import FollowupTask
+from app.models.invite_code import InviteCode
 from app.models.journal import JournalEntry
 from app.models.mood import MoodLog
 from app.models.notification import Notification
@@ -62,6 +63,18 @@ def salt():
 
 # ── 2. ACCOUNTS ────────────────────────────────────────────────
 print("=== CREATING ACCOUNTS ===")
+admin = User(
+    username="admin",
+    password_hash=hash_password("password123"),
+    name="Clinic Admin",
+    role="admin",
+    clinic_code="DEMO",
+    onboarding_step=99,
+    email="admin@sentinel.demo",
+    email_verified_at=now.isoformat(),
+    encryption_salt=salt(),
+    created_at=now.isoformat(),
+)
 cel = User(
     username="cel",
     password_hash=hash_password("1234"),
@@ -87,10 +100,27 @@ alaya = User(
     encryption_salt=salt(),
     created_at=now.isoformat(),
 )
-db.add_all([cel, alaya])
+db.add_all([admin, cel, alaya])
 db.commit()
+print("  admin: admin / password123")
 print("  psych: cel / 1234")
 print("  patient: alaya / 4321")
+print()
+
+# ── 2b. DOCTOR INVITE CODES ───────────────────────────────────
+invite = InviteCode(
+    code="INV-DEMO123",
+    clinic_code="DEMO",
+    created_by="admin",
+    created_at=now.isoformat(),
+    expires_at=(now + timedelta(days=30)).isoformat(),
+    max_uses=10,
+    use_count=0,
+    active=1,
+)
+db.add(invite)
+db.commit()
+print("  invite code for doctor signup: INV-DEMO123 (clinic DEMO, 10 uses, 30 days)")
 print()
 
 # ── 3. JOURNALS (patient + clinical summaries) ────────────────

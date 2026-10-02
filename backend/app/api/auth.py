@@ -1,4 +1,5 @@
 import logging
+import secrets
 import time as _time
 from datetime import UTC, datetime, timedelta
 
@@ -10,7 +11,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.device_tracker import parse_user_agent
 from app.core.location import user_timezone
-from app.core.login_rate_limiter import LoginRateLimiter, login_rate_limiter
+from app.core.login_rate_limiter import LoginRateLimiter
 from app.core.password_validator import PasswordPolicy
 from app.core.security import (
     create_access_token,
@@ -22,12 +23,22 @@ from app.core.security import (
     password_needs_rehash,
     verify_password,
 )
+from app.core.structured_errors import ErrorCode, err
 from app.core.token_blacklist import token_blacklist
 from app.events import get_event_bus
+from app.models.invite_code import InviteCode
 from app.models.user import User
 from app.repositories import PatientRepository
-from app.schemas.auth import LoginRequest, RefreshRequest, RegisterRequest, TokenResponse, UnlockRequest
+from app.schemas.auth import (
+    LoginRequest,
+    RefreshRequest,
+    RegisterRequest,
+    ResendVerificationRequest,
+    TokenResponse,
+    UnlockRequest,
+)
 from app.services.audit import log_audit
+from app.services.notification import send_email
 
 logger = logging.getLogger("sentinel.auth")
 
@@ -41,10 +52,40 @@ PROFESSIONAL_CODES = {
     "PSY-0005": "SENTINEL-05",
 }
 
-MAX_FAILED_ATTEMPTS = 5
-LOCKOUT_MINUTES = 15
+VERIFICATION_TOKEN_TTL_HOURS = 48
 
-unlock_rate_limiter = LoginRateLimiter(max_attempts=5, window_seconds=60, lockout_seconds=300)
+
+def _verification_link(token: str) -> str:
+    base = (settings.cors_origins.split(",")[0].strip() if settings.cors_origins else "") or "http://localhost:5173"
+    return f"{base}/verify-email?token={token}"
+
+
+def issue_email_verification(user: User, db: Session) -> bool:
+    """Store a fresh verification token on the user and attempt to email it.
+    Email delivery is best-effort: if SMTP is not configured the account can
+    still be used (verification is optional), and the admin can resend later.
+    Returns True when the email was actually sent."""
+    token = secrets.token_urlsafe(32)
+    user.verification_token = token
+    user.verification_expires = (datetime.now(UTC) + timedelta(hours=VERIFICATION_TOKEN_TTL_HOURS)).isoformat()
+    db.commit()
+    link = _verification_link(token)
+    try:
+        return send_email(
+            user.email,
+            "Verify your Sentinel email",
+            "Welcome to Sentinel!\n\n"
+            f"Confirm your email address by opening this link:\n{link}\n\n"
+            f"The link expires in {VERIFICATION_TOKEN_TTL_HOURS // 24} days. "
+            "If you didn't create this account, you can ignore this email.",
+        )
+    except Exception:  # never block registration on email failures
+        logger.exception("verification email send failed for %s", user.username)
+        return False
+
+
+# Demo mode: login lockouts and attempt limiting are disabled entirely.
+unlock_rate_limiter = LoginRateLimiter(max_attempts=8, window_seconds=60, lockout_seconds=60)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -53,28 +94,10 @@ def login(req: LoginRequest, request: Request, response: Response, db: Session =
     device_info = parse_user_agent(ua)
     client_ip = request.client.host if request.client else "unknown"
 
-    is_locked, lockout_remaining = login_rate_limiter.is_locked(req.username)
-    if is_locked:
-        log_audit(
-            "login_rate_limited",
-            user=req.username,
-            severity="WARNING",
-            status="failure",
-            details=f"Rate limited from {client_ip}, {lockout_remaining}s remaining",
-            device=device_info.device,
-            browser=device_info.browser,
-            db=db,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Too many login attempts. Try again in {lockout_remaining} seconds.",
-            headers={"Retry-After": str(lockout_remaining)},
-        )
-
     repo = PatientRepository(db)
+
     user = repo.get_by_username(req.username)
     if not user:
-        login_rate_limiter.record_attempt(req.username, success=False)
         log_audit(
             "login_failed",
             user=req.username,
@@ -85,61 +108,23 @@ def login(req: LoginRequest, request: Request, response: Response, db: Session =
             browser=device_info.browser,
             db=db,
         )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-
-    if user.locked_until:
-        try:
-            lockout_end = datetime.fromisoformat(user.locked_until)
-            if datetime.now(UTC) < lockout_end:
-                remaining = int((lockout_end - datetime.now(UTC)).total_seconds() / 60)
-                log_audit(
-                    "login_locked",
-                    user=req.username,
-                    severity="WARNING",
-                    status="failure",
-                    details=f"Account locked, retry in {remaining}m",
-                    device=device_info.device,
-                    browser=device_info.browser,
-                    db=db,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=f"Account locked. Try again in {remaining} minutes.",
-                    headers={"Retry-After": str(max(1, remaining * 60))},
-                )
-        except ValueError:
-            pass
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials")
 
     if not verify_password(req.password, user.password_hash or ""):
-        login_rate_limiter.record_attempt(req.username, success=False)
-        user.failed_attempts = (user.failed_attempts or 0) + 1
-        if user.failed_attempts >= MAX_FAILED_ATTEMPTS:
-            user.locked_until = (datetime.now(UTC) + timedelta(minutes=LOCKOUT_MINUTES)).isoformat()
-            log_audit(
-                "account_locked",
-                user=req.username,
-                severity="WARNING",
-                status="failure",
-                details=f"Locked after {MAX_FAILED_ATTEMPTS} failed attempts from {client_ip}",
-                device=device_info.device,
-                browser=device_info.browser,
-                db=db,
-            )
-        else:
-            log_audit(
-                "login",
-                user=req.username,
-                severity="WARNING",
-                status="failure",
-                details=f"Attempt {user.failed_attempts}/{MAX_FAILED_ATTEMPTS} from {client_ip}",
-                device=device_info.device,
-                browser=device_info.browser,
-                db=db,
-            )
+        log_audit(
+            "login",
+            user=req.username,
+            severity="WARNING",
+            status="failure",
+            details=f"Invalid credentials from {client_ip}",
+            device=device_info.device,
+            browser=device_info.browser,
+            db=db,
+        )
         db.commit()
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.AUTH_INVALID_CREDENTIALS, "Invalid credentials")
 
-    login_rate_limiter.record_attempt(req.username, success=True)
+    # Demo mode: heal any stale lock fields left over from earlier versions.
     user.failed_attempts = 0
     user.locked_until = ""
     if password_needs_rehash(user.password_hash or ""):
@@ -196,30 +181,17 @@ def refresh_token(req: RefreshRequest, response: Response, db: Session = Depends
     token = req.refresh_token
     payload = decode_refresh_token(token)
     if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.SESSION_EXPIRED, "Invalid refresh token")
 
     jti = payload.get("jti", "")
     if token_blacklist.is_revoked(jti):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token revoked")
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.SESSION_EXPIRED, "Refresh token revoked")
 
     username = payload.get("sub")
     repo = PatientRepository(db)
     user = repo.get_by_username(username)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-
-    if user.locked_until:
-        try:
-            lockout_end = datetime.fromisoformat(user.locked_until)
-            if datetime.now(UTC) < lockout_end:
-                remaining = int((lockout_end - datetime.now(UTC)).total_seconds() / 60)
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail=f"Account locked. Try again in {remaining} minutes.",
-                    headers={"Retry-After": str(max(1, remaining * 60))},
-                )
-        except ValueError:
-            pass
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.SESSION_EXPIRED, "User not found")
 
     # Rotate: revoke the presented refresh token and issue a fresh pair.
     token_blacklist.revoke(jti, float(payload.get("exp", _time.time())))
@@ -275,25 +247,77 @@ def register(req: RegisterRequest, request: Request, db: Session = Depends(get_d
             browser=device_info.browser,
             db=db,
         )
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username taken")
+        raise err(status.HTTP_400_BAD_REQUEST, ErrorCode.USERNAME_TAKEN, "Username taken")
     import os as _os
 
+    # Email is optional but must be unique when given (production accounts).
+    email = (req.email or "").strip().lower()
+    if email:
+        email_taken = db.query(User).filter(User.email == email, User.deleted_at.is_(None)).first()
+        if email_taken:
+            raise err(status.HTTP_400_BAD_REQUEST, ErrorCode.DUPLICATE_RESOURCE, "This email is already registered")
+
+    invite: InviteCode | None = None
     if req.role == "psychologist":
-        clinic_code = PROFESSIONAL_CODES.get(req.professional_code.strip().upper())
-        if not clinic_code:
+        license_number = (req.license_number or "").strip()
+        invite_code = (req.invite_code or "").strip().upper()
+        legacy_code = PROFESSIONAL_CODES.get(req.professional_code.strip().upper())
+
+        if license_number:
+            dup_license = (
+                db.query(User)
+                .filter(User.role == "psychologist", User.license_number == license_number, User.deleted_at.is_(None))
+                .first()
+            )
+            if dup_license:
+                raise err(
+                    status.HTTP_400_BAD_REQUEST,
+                    ErrorCode.DUPLICATE_RESOURCE,
+                    "This license number is already registered to another clinician",
+                )
+
+        if invite_code:
+            # Production path: admin-issued invite code.
+            invite = db.get(InviteCode, invite_code)
+            if not invite or not invite.active:
+                raise err(status.HTTP_400_BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "Invalid invite code")
+            if invite.expires_at:
+                try:
+                    if datetime.fromisoformat(invite.expires_at) < datetime.now(UTC):
+                        raise err(
+                            status.HTTP_400_BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "This invite code has expired"
+                        )
+                except ValueError:
+                    pass
+            if invite.max_uses and invite.use_count >= invite.max_uses:
+                raise err(status.HTTP_400_BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "This invite code has no uses left")
+            if not license_number:
+                raise err(
+                    status.HTTP_400_BAD_REQUEST,
+                    ErrorCode.VALIDATION_ERROR,
+                    "License number is required to register as a clinician",
+                )
+            clinic_code = invite.clinic_code
+            occupation = (req.occupation or "").strip()
+            professional_code = ""
+            assigned_psych = ""
+        elif legacy_code:
+            # Legacy/demo path: pre-provisioned professional codes.
+            existing = db.query(User).filter(User.professional_code == req.professional_code.strip().upper()).first()
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="This professional code is already registered to another psychologist.",
+                )
+            clinic_code = legacy_code
+            occupation = (req.occupation or "").strip()
+            professional_code = req.professional_code.strip().upper()
+            assigned_psych = ""
+        else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid professional code. Check the code you were issued.",
+                detail="An invite code from your clinic administrator is required to register as a psychologist.",
             )
-        existing = db.query(User).filter(User.professional_code == req.professional_code.strip().upper()).first()
-        if existing:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="This professional code is already registered to another psychologist.",
-            )
-        occupation = (req.occupation or "").strip()
-        professional_code = req.professional_code.strip().upper()
-        assigned_psych = ""
     else:
         occupation = req.occupation or ""
         professional_code = ""
@@ -324,22 +348,35 @@ def register(req: RegisterRequest, request: Request, db: Session = Depends(get_d
         clinic_code=clinic_code,
         professional_code=professional_code,
         assigned_psych=assigned_psych,
+        email=email,
+        license_number=(req.license_number or "").strip() if req.role == "psychologist" else "",
         onboarding_step=0,
         encryption_salt=_os.urandom(16).hex(),
         created_at=datetime.now(UTC).isoformat(),
     )
     repo.add(user)
+    db.flush()
+
+    if invite is not None:
+        invite.use_count = (invite.use_count or 0) + 1
+        invite.used_by = req.username
+
+    verification_sent = False
+    if email:
+        verification_sent = issue_email_verification(user, db)
+
     get_event_bus().emit("auth:registered", username=req.username, role=req.role, clinic=req.clinic_code)
     log_audit(
         "registration_success",
         user=req.username,
         severity="INFO",
         status="success",
+        details="invite_code used" if invite is not None else "",
         device=device_info.device,
         browser=device_info.browser,
         db=db,
     )
-    return ok(message="Registered")
+    return ok(message="Registered", data={"verification_email_sent": verification_sent} if email else None)
 
 
 @router.post("/unlock")
@@ -369,7 +406,52 @@ def unlock(req: UnlockRequest, request: Request):
     except Exception as e:
         unlock_rate_limiter.record_attempt(client_ip, success=False)
         log_audit("encryption_unlock_failed", severity="ERROR", status="failure", details=str(e))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unlock failed") from None
+        raise err(status.HTTP_400_BAD_REQUEST, ErrorCode.ACCOUNT_UNLOCK_FAILED, "Unlock failed") from None
+
+
+@router.get("/verify-email")
+def verify_email(token: str, db: Session = Depends(get_db)):
+    """Confirm an email address via the token from the verification link."""
+    user = db.query(User).filter(User.verification_token == token, User.deleted_at.is_(None)).first()
+    if not user:
+        raise err(status.HTTP_400_BAD_REQUEST, ErrorCode.VALIDATION_ERROR, "Invalid or already-used verification link")
+    if user.verification_expires:
+        try:
+            if datetime.fromisoformat(user.verification_expires) < datetime.now(UTC):
+                raise err(
+                    status.HTTP_400_BAD_REQUEST,
+                    ErrorCode.VALIDATION_ERROR,
+                    "This verification link has expired — request a new one",
+                )
+        except ValueError:
+            pass
+    user.email_verified_at = datetime.now(UTC).isoformat()
+    user.verification_token = ""
+    user.verification_expires = ""
+    db.commit()
+    log_audit("email_verified", user=user.username, severity="INFO", status="success", db=db)
+    return ok(data={"verified": True, "username": user.username})
+
+
+@router.post("/resend-verification")
+def resend_verification(req: ResendVerificationRequest, request: Request, db: Session = Depends(get_db)):
+    """Re-send the verification email. Deliberately does not reveal whether
+    the account exists or already has a verified email."""
+    client_ip = request.client.host if request.client else "unknown"
+    is_locked, remaining = unlock_rate_limiter.is_locked(client_ip)
+    if is_locked:
+        raise err(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            ErrorCode.RATE_LIMITED,
+            f"Too many requests. Try again in {remaining} seconds.",
+        )
+    unlock_rate_limiter.record_attempt(client_ip, success=True)
+
+    repo = PatientRepository(db)
+    user = repo.get_by_username(req.username)
+    if user and (user.email or "").strip() and not user.email_verified_at:
+        issue_email_verification(user, db)
+    return ok(message="If that account has an unverified email, a new link is on its way.")
 
 
 @router.post("/logout")
@@ -380,7 +462,7 @@ def logout(request: Request, response: Response):
         if auth_header.lower().startswith("bearer "):
             token = auth_header[7:].strip()
     if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHORIZED, "Not authenticated")
     from app.core.security import decode_access_token as _decode
     from app.core.security import decode_refresh_token as _decode_refresh
 

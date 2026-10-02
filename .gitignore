@@ -31,6 +31,7 @@ IRIS/
 IRIS_2026_SENTINEL/
 MindRise*
 *.tsbuildinfo
+azure-deploy/
 # docs kept locally in the workspace, not published to GitHub
 kiot/
 docs/business/

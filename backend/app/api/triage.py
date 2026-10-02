@@ -1,11 +1,12 @@
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import require_role
+from app.core.structured_errors import ErrorCode, err
 from app.models.triage import TriageEntry
 from app.models.user import User
 from app.schemas.triage import TriageCreate, TriageResponse, TriageUpdate
@@ -100,7 +101,7 @@ def update_triage_entry(
 ):
     entry = db.query(TriageEntry).filter(TriageEntry.id == entry_id).first()
     if not entry:
-        raise HTTPException(status_code=404, detail="Triage entry not found")
+        raise err(404, ErrorCode.TRIAGE_NOT_FOUND, "Triage entry not found")
     if req.status:
         entry.status = req.status
     if req.priority:

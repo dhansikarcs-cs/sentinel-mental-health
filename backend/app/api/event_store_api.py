@@ -12,7 +12,7 @@ def list_events(
     event_type: str = "",
     aggregate_id: str = "",
     limit: int = Query(50, ge=1, le=200),
-    user: User = Depends(require_role("psychologist")),
+    user: User = Depends(require_role("psychologist", "admin")),
 ):
     events = event_store.get_events(event_type=event_type, aggregate_id=aggregate_id, limit=limit)
     return [
@@ -34,7 +34,7 @@ def list_events(
 def get_patient_events(
     username: str,
     limit: int = Query(50, ge=1, le=200),
-    user: User = Depends(require_role("psychologist")),
+    user: User = Depends(require_role("psychologist", "admin")),
 ):
     events = event_store.get_events(aggregate_id=username, limit=limit)
     return [
@@ -53,7 +53,7 @@ def get_patient_events(
 @router.get("/replay")
 def replay_events(
     from_sequence: int = Query(0, ge=0),
-    user: User = Depends(require_role("psychologist")),
+    user: User = Depends(require_role("psychologist", "admin")),
 ):
     events = event_store.replay(from_sequence=from_sequence)
     return {"events_replayed": len(events)}

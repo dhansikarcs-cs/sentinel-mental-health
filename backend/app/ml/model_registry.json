@@ -3,7 +3,7 @@
     "name": "emotion_classifier",
     "version": "1.0.0",
     "model_type": "tfidf_logistic_regression",
-    "path": "C:\\Users\\dhans\\Desktop\\sentinel3\\backend\\app\\ml\\emotion_model.pkl",
+    "path": "/Users/junho/Downloads/Projects/psychology/Sentinel_V_1_/backend/app/ml/emotion_model.pkl",
     "trained_at": "2026-08-03T07:00:21Z",
     "metrics": {
       "micro_f1": 0.4642,

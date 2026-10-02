@@ -1,7 +1,7 @@
 import json
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -12,6 +12,7 @@ from app.core.dependencies import get_current_user, require_role
 from app.core.idempotency import idempotency_store
 from app.core.input_validator import validate_journal_content
 from app.core.pagination import paginate
+from app.core.structured_errors import ErrorCode, err
 from app.events import get_event_bus
 from app.models.journal import JournalEntry
 from app.models.user import User
@@ -291,9 +292,9 @@ def resummarize_journal(
     repo = JournalRepository(db)
     journal = repo.get_by_id(journal_id)
     if not journal:
-        raise HTTPException(status_code=404, detail="Journal not found")
+        raise err(404, ErrorCode.JOURNAL_NOT_FOUND, "Journal not found")
     if journal.patient_username != user.username and user.role != "psychologist":
-        raise HTTPException(status_code=403, detail="Not authorized")
+        raise err(403, ErrorCode.OWNER_ONLY, "Not authorized")
 
     background_tasks.add_task(
         analyze_journal_background,
@@ -309,9 +310,9 @@ def delete_journal(journal_id: int, user: User = Depends(get_current_user), db: 
     repo = JournalRepository(db)
     journal = repo.get_by_id(journal_id)
     if not journal:
-        raise HTTPException(status_code=404, detail="Journal not found")
+        raise err(404, ErrorCode.JOURNAL_NOT_FOUND, "Journal not found")
     if journal.patient_username != user.username and user.role != "psychologist":
-        raise HTTPException(status_code=403, detail="Not authorized")
+        raise err(403, ErrorCode.OWNER_ONLY, "Not authorized")
     repo.soft_delete(journal_id, deleted_by=user.username)
     return ok(message="Journal deleted")
 

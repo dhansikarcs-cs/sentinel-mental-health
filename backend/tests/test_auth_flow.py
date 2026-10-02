@@ -272,9 +272,10 @@ def test_refresh_rejects_bogus_token(client):
     assert resp.status_code == 401
 
 
-def test_account_locks_after_repeated_failures(client, make_user):
+def test_no_lockout_in_demo_mode(client, make_user):
+    # Demo mode: repeated failures never lock the account.
     user = make_user()
-    for _ in range(5):
+    for _ in range(12):
         resp = client.post(
             "/api/auth/login",
             json={"username": user["username"], "password": "Wrong!Pass1"},
@@ -284,8 +285,7 @@ def test_account_locks_after_repeated_failures(client, make_user):
         "/api/auth/login",
         json={"username": user["username"], "password": PASSWORD},
     )
-    assert resp.status_code == 429
-    assert "too many" in resp.json()["message"].lower()
+    assert resp.status_code == 200
 
 
 def test_role_gating_materializes_psychologist(client, make_user):

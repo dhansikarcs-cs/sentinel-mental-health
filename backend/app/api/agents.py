@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import require_role
+from app.core.structured_errors import ErrorCode, err
 from app.models.booking import Booking, PsychAvailability
-from app.models.crisis import CrisisState
+from app.models.crisis import CrisisLog, CrisisState
+from app.models.followup import FollowupTask
 from app.models.journal import JournalEntry
 from app.models.mood import MoodLog
 from app.models.ring import RingSensorLog
@@ -678,4 +680,311 @@ def crisis_debrief(
         "follow_up_plan": data.get("follow_up_plan", ""),
         "ai_source": "ollama",
         "prompt_version": "crisis_debrief/v1",
+    }
+
+
+# ── Session readiness score ─────────────────────────────────────
+
+READINESS_FACTORS_V1 = "readiness/v1"
+
+
+def _readiness_factors(
+    journals_7d: int,
+    moods_7d: int,
+    mood_trend: str,
+    followups_total: int,
+    followups_completed: int,
+    days_since_crisis: int | None,
+) -> list[dict]:
+    """Named, bounded factors — the score is the sum of the points."""
+    factors = []
+
+    checkins = journals_7d + moods_7d
+    engagement_points = min(40, checkins * 5)
+    factors.append(
+        {
+            "factor": "Engagement",
+            "points": engagement_points,
+            "max_points": 40,
+            "detail": f"{journals_7d} journals + {moods_7d} mood logs in the last 7 days",
+        }
+    )
+
+    mood_points = {"improving": 25, "stable": 18, "declining": 6}.get(mood_trend, 12)
+    factors.append(
+        {
+            "factor": "Mood trend",
+            "points": mood_points,
+            "max_points": 25,
+            "detail": f"Trend over the last two weeks: {mood_trend}",
+        }
+    )
+
+    if followups_total > 0:
+        ratio = followups_completed / followups_total
+        followup_points = int(20 * ratio)
+        detail = f"{followups_completed}/{followups_total} follow-up tasks completed"
+    else:
+        followup_points = 15  # nothing assigned — neutral-positive
+        detail = "No follow-up tasks assigned yet"
+    factors.append(
+        {
+            "factor": "Follow-up completion",
+            "points": followup_points,
+            "max_points": 20,
+            "detail": detail,
+        }
+    )
+
+    if days_since_crisis is None:
+        crisis_points = 15
+        crisis_detail = "No crisis episodes on record"
+    elif days_since_crisis < 3:
+        crisis_points = 0
+        crisis_detail = f"Crisis episode {days_since_crisis} day(s) ago"
+    elif days_since_crisis < 14:
+        crisis_points = 7
+        crisis_detail = f"Crisis episode {days_since_crisis} days ago"
+    else:
+        crisis_points = 15
+        crisis_detail = f"Last crisis was {days_since_crisis} days ago"
+    factors.append(
+        {
+            "factor": "Crisis recency",
+            "points": crisis_points,
+            "max_points": 15,
+            "detail": crisis_detail,
+        }
+    )
+
+    return factors
+
+
+def _score_band(score: int) -> str:
+    if score >= 70:
+        return "high"
+    if score >= 40:
+        return "medium"
+    return "low"
+
+
+def _compute_session_readiness(db: Session, patient_username: str) -> dict:
+    ctx = recent_patient_context(db, patient_username, journal_limit=14, mood_limit=14, include_followups=True)
+
+    week_ago = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+    journals_7d = sum(1 for j in ctx.journals if j.timestamp >= week_ago)
+    moods_7d = sum(1 for m in ctx.moods if m.timestamp >= week_ago)
+
+    mood_labels = [m.label for m in ctx.moods[:7]]
+    older_labels = [m.label for m in ctx.moods[7:14]]
+    positive = ("good", "great", "okay")
+    recent_pos = sum(1 for l in mood_labels if l in positive)
+    older_pos = sum(1 for l in older_labels if l in positive)
+    if len(mood_labels) == 0 and len(older_labels) == 0:
+        mood_trend = "unknown"
+    elif recent_pos > older_pos:
+        mood_trend = "improving"
+    elif recent_pos < older_pos:
+        mood_trend = "declining"
+    else:
+        mood_trend = "stable"
+
+    total = len(ctx.followups)
+    completed = sum(1 for f in ctx.followups if f.status == "completed")
+
+    last_resolved = (
+        db.query(CrisisLog)
+        .filter(CrisisLog.patient == patient_username, CrisisLog.event == "resolved")
+        .order_by(CrisisLog.id.desc())
+        .first()
+    )
+    active_crisis = (
+        db.query(CrisisState).filter(CrisisState.patient_username == patient_username, CrisisState.active == 1).first()
+    )
+    days_since_crisis: int | None = None
+    if active_crisis:
+        days_since_crisis = 0
+    elif last_resolved and last_resolved.timestamp:
+        try:
+            days_since_crisis = max(0, (datetime.now(UTC) - datetime.fromisoformat(last_resolved.timestamp)).days)
+        except (ValueError, TypeError):
+            days_since_crisis = None
+
+    factors = _readiness_factors(journals_7d, moods_7d, mood_trend, total, completed, days_since_crisis)
+    score = max(0, min(100, sum(f["points"] for f in factors)))
+
+    return {
+        "patient": patient_username,
+        "score": score,
+        "band": _score_band(score),
+        "factors": factors,
+        "prompt_version": READINESS_FACTORS_V1,
+    }
+
+
+class SessionReadinessRequest(BaseModel):
+    patient_username: str
+
+
+@router.post("/session-readiness")
+def session_readiness_post(
+    req: SessionReadinessRequest,
+    user: User = Depends(require_role("psychologist")),
+    db: Session = Depends(get_db),
+):
+    patient = db.query(User).filter(User.username == req.patient_username, User.role == "patient").first()
+    if not patient:
+        raise err(404, ErrorCode.PATIENT_NOT_FOUND, "Patient not found")
+    if patient.assigned_psych != user.username:
+        raise err(403, ErrorCode.NOT_ASSIGNED, "This client is not assigned to you")
+    return _compute_session_readiness(db, req.patient_username)
+
+
+@router.get("/session-readiness/{patient_username}")
+def session_readiness_get(
+    patient_username: str,
+    user: User = Depends(require_role("psychologist")),
+    db: Session = Depends(get_db),
+):
+    patient = db.query(User).filter(User.username == patient_username, User.role == "patient").first()
+    if not patient:
+        raise err(404, ErrorCode.PATIENT_NOT_FOUND, "Patient not found")
+    if patient.assigned_psych != user.username:
+        raise err(403, ErrorCode.NOT_ASSIGNED, "This client is not assigned to you")
+    return _compute_session_readiness(db, patient_username)
+
+
+# ── Weekly digest ───────────────────────────────────────────────
+
+
+@router.get("/weekly-digest")
+def weekly_digest(
+    user: User = Depends(require_role("psychologist", "admin")),
+    db: Session = Depends(get_db),
+):
+    """Monday-morning rollup of the last 7 days across the caseload.
+
+    One read-only call: caseload totals, per-client activity deltas,
+    completed follow-ups, crisis episodes, and a handful of highlights
+    worth mentioning in supervision or noting in the diary.
+    """
+    now = datetime.now(UTC)
+    week_ago = (now - timedelta(days=7)).isoformat()
+    prev_week_ago = (now - timedelta(days=14)).isoformat()
+
+    q = db.query(User).filter(User.role == "patient", User.deleted_at.is_(None))
+    patients = (
+        q.order_by(User.username).all()
+        if user.role == "admin"
+        else q.filter(User.assigned_psych == user.username).all()
+    )
+
+    total_journals = 0
+    total_moods = 0
+    prev_total = 0
+    followups_completed = 0
+    crisis_episodes = 0
+    highlights: list[dict] = []
+
+    for p in patients:
+        journals = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.patient_username == p.username, JournalEntry.timestamp >= week_ago)
+            .count()
+        )
+        prev_journals = (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.patient_username == p.username,
+                JournalEntry.timestamp >= prev_week_ago,
+                JournalEntry.timestamp < week_ago,
+            )
+            .count()
+        )
+        moods = db.query(MoodLog).filter(MoodLog.patient_username == p.username, MoodLog.timestamp >= week_ago).count()
+        prev_moods = (
+            db.query(MoodLog)
+            .filter(
+                MoodLog.patient_username == p.username,
+                MoodLog.timestamp >= prev_week_ago,
+                MoodLog.timestamp < week_ago,
+            )
+            .count()
+        )
+        completed = (
+            db.query(FollowupTask)
+            .filter(
+                FollowupTask.patient_username == p.username,
+                FollowupTask.status == "completed",
+                FollowupTask.completed_at >= week_ago,
+            )
+            .count()
+        )
+        resolved = (
+            db.query(CrisisLog)
+            .filter(CrisisLog.patient == p.username, CrisisLog.event == "resolved", CrisisLog.timestamp >= week_ago)
+            .count()
+        )
+
+        total_journals += journals
+        total_moods += moods
+        prev_total += prev_journals + prev_moods
+        followups_completed += completed
+        crisis_episodes += resolved
+
+        activity = journals + moods
+        prev_activity = prev_journals + prev_moods
+        if resolved:
+            highlights.append(
+                {
+                    "patient": p.username,
+                    "name": p.name,
+                    "kind": "crisis_resolved",
+                    "text": f"Recovered from {resolved} crisis episode(s)",
+                }
+            )
+        if completed >= 3:
+            highlights.append(
+                {
+                    "patient": p.username,
+                    "name": p.name,
+                    "kind": "followups",
+                    "text": f"Completed {completed} follow-up tasks",
+                }
+            )
+        if activity == 0 and prev_activity > 0:
+            highlights.append(
+                {
+                    "patient": p.username,
+                    "name": p.name,
+                    "kind": "went_silent",
+                    "text": f"Went silent after {prev_activity} check-ins last week",
+                }
+            )
+        if activity >= 10:
+            highlights.append(
+                {
+                    "patient": p.username,
+                    "name": p.name,
+                    "kind": "highly_engaged",
+                    "text": f"{activity} check-ins this week — highly engaged",
+                }
+            )
+
+    delta = total_journals + total_moods - prev_total
+    trend = "up" if delta > 0 else "down" if delta < 0 else "flat"
+
+    return {
+        "week_of": now.date().isoformat(),
+        "summary": {
+            "total_clients": len(patients),
+            "journals": total_journals,
+            "moods": total_moods,
+            "checkins": total_journals + total_moods,
+            "checkin_trend": trend,
+            "checkin_delta": delta,
+            "followups_completed": followups_completed,
+            "crisis_episodes_resolved": crisis_episodes,
+        },
+        "highlights": highlights[:10],
     }

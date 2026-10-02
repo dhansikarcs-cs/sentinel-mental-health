@@ -3,13 +3,14 @@ import json
 import secrets
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import RingIdentity, get_current_user, get_ring_identity
 from app.core.input_validator import validate_sensor_data
+from app.core.structured_errors import ErrorCode, err
 from app.models.ring import RingSensorLog
 from app.models.ring_device import RingDevice
 from app.models.user import User
@@ -35,7 +36,7 @@ def pair_ring_device(data: RingDeviceCreate, user: User = Depends(get_current_us
     token = secrets.token_urlsafe(32)
     if existing:
         if existing.status == "paired":
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Serial already paired")
+            raise err(status.HTTP_409_CONFLICT, ErrorCode.DEVICE_ALREADY_PAIRED, "Serial already paired")
         existing.patient_username = user.username
         existing.device_token_hash = _hash_device_token(token)
         existing.vendor = data.vendor
@@ -96,9 +97,9 @@ def pair_ring_device(data: RingDeviceCreate, user: User = Depends(get_current_us
 def unpair_ring_device(serial: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     device = db.query(RingDevice).filter(RingDevice.serial == serial).first()
     if not device:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
+        raise err(status.HTTP_404_NOT_FOUND, ErrorCode.DEVICE_NOT_FOUND, "Device not found")
     if device.patient_username != user.username and user.role != "psychologist":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your device")
+        raise err(status.HTTP_403_FORBIDDEN, ErrorCode.OWNER_ONLY, "Not your device")
     device.status = "revoked"
     device.device_token_hash = ""
     db.commit()

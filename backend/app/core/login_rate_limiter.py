@@ -6,7 +6,7 @@ logger = logging.getLogger("sentinel.login_rate_limiter")
 
 
 class LoginRateLimiter:
-    def __init__(self, max_attempts: int = 5, window_seconds: int = 60, lockout_seconds: int = 300):
+    def __init__(self, max_attempts: int = 8, window_seconds: int = 60, lockout_seconds: int = 60):
         self.max_attempts = max_attempts
         self.window_seconds = window_seconds
         self.lockout_seconds = lockout_seconds

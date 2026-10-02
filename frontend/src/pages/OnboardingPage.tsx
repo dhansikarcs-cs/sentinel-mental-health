@@ -5,10 +5,10 @@ import { api } from '../api/client'
 import { EMAIL_RE } from '../constants'
 
 const STEPS = [
-  { emoji: '\u{1F3E0}', label: 'About You' },
-  { emoji: '\u{1F4DD}', label: 'First Entry' },
-  { emoji: '\u{1F6E1}\uFE0F', label: 'Emergency' },
-  { emoji: '\u{1F4F1}', label: 'Contact' },
+  { emoji: '🏠', label: 'About You' },
+  { emoji: '📝', label: 'First Entry' },
+  { emoji: '🛡️', label: 'Emergency' },
+  { emoji: '📱', label: 'Contact' },
 ]
 
 export default function OnboardingPage() {
@@ -72,153 +72,147 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ padding: '32px' }}>
-      <div style={{ width: '100%', maxWidth: '560px' }}>
+    <div className="min-h-screen flex items-center justify-center" style={{ padding: '28px', background: 'var(--bg)' }}>
+      <div style={{
+        position: 'fixed', top: '-140px', right: '-140px', width: '420px', height: '420px',
+        borderRadius: '999px', background: 'radial-gradient(circle, var(--lime) 0%, transparent 70%)',
+        opacity: 0.45, pointerEvents: 'none',
+      }} />
+      <div style={{ width: '100%', maxWidth: '600px', position: 'relative', zIndex: 1 }}>
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <div style={{ fontSize: '2rem', fontWeight: 700, background: 'linear-gradient(135deg,var(--accent),var(--accent-hover))', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', letterSpacing: '-0.02em' }}>
-            Welcome to Sentinel
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+            <div style={{ width: 36, height: 36, borderRadius: 999, background: 'var(--ink)', color: 'var(--lime)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem' }}>✳</div>
+            <span style={{ fontWeight: 800, fontSize: '1.1rem' }}>Sentinel</span>
           </div>
-          <div style={{ color: 'var(--muted)', fontSize: '0.85rem', marginTop: '4px' }}>Let's get you set up in a few quick steps</div>
+          <h1 className="page-title" style={{ fontSize: 'clamp(1.8rem, 4vw, 2.4rem)' }}>Welcome, {user?.name?.split(' ')[0]}</h1>
+          <div className="page-sub">Four quick steps and you're in</div>
         </div>
 
-        {/* Clickable step indicators */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '24px' }}>
+        {/* Steps */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '16px' }}>
           {STEPS.map((s, i) => {
             const done = i < step
             const active = i === step
-            const bg = done ? 'var(--ok-soft)' : active ? 'var(--accent-soft)' : 'var(--surface)'
-            const border = done ? 'color-mix(in srgb, var(--ok) 25%, transparent)' : active ? 'color-mix(in srgb, var(--accent) 38%, transparent)' : 'var(--border)'
-            const color = done ? 'var(--ok)' : active ? 'var(--accent)' : 'var(--faint)'
-            const icon = done ? '\u2705' : s.emoji
             return (
               <div
                 key={i}
                 onClick={() => i <= step && goTo(i)}
+                className={done ? 'card-sm step-done' : active ? 'card-sm step-active' : 'card-sm step-pending'}
                 style={{
-                  background: bg, border: `1px solid ${border}`, borderRadius: '8px',
-                  padding: '10px 6px', textAlign: 'center', transition: 'all 0.3s',
+                  textAlign: 'center', padding: '12px 6px', transition: 'all 0.3s',
                   cursor: i <= step ? 'pointer' : 'default',
-                  opacity: i > step ? 0.5 : 1,
+                  opacity: i > step ? 0.5 : 1, margin: 0,
                 }}
               >
-                <div style={{ fontSize: '1.2rem' }}>{icon}</div>
-                <div style={{ color, fontSize: '0.65rem', fontWeight: active || done ? 600 : 400, marginTop: '2px' }}>{s.label}</div>
+                <div style={{ fontSize: '1.3rem' }}>{done ? '✅' : s.emoji}</div>
+                <div style={{ color: done ? 'var(--ok)' : active ? 'var(--heading)' : 'var(--faint)', fontSize: '0.64rem', fontWeight: active || done ? 800 : 500, marginTop: '3px' }}>{s.label}</div>
               </div>
             )
           })}
         </div>
 
-        {/* Progress bar */}
-        <div style={{ height: '3px', background: 'var(--surface)', borderRadius: '2px', marginBottom: '20px', overflow: 'hidden' }}>
-          <div style={{ height: '100%', width: `${((step + 1) / 4) * 100}%`, background: 'linear-gradient(90deg, var(--ok), var(--accent))', borderRadius: '2px', transition: 'width 0.4s ease' }} />
+        <div className="track" style={{ marginBottom: '18px' }}>
+          <div style={{ width: `${((step + 1) / 4) * 100}%`, background: 'linear-gradient(90deg, var(--lime), var(--lime-deep))' }} />
         </div>
 
-        {/* Step content */}
-        <div className="card" style={{ padding: '28px', minHeight: '280px' }}>
-
-          {/* Step 0: About You */}
+        <div className="card" style={{ padding: '30px', minHeight: '300px' }}>
           {step === 0 && (
             <div>
-              <h3>🏠 About You</h3>
-              <div style={{ background: 'linear-gradient(135deg,var(--surface),var(--ok-soft))', border: '1px solid var(--border)', borderRadius: '12px', padding: '20px', margin: '12px 0' }}>
-                <div style={{ color: 'var(--muted)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Your Account</div>
-                <div style={{ color: 'var(--strong)', fontSize: '1.1rem', fontWeight: 600, marginTop: '4px' }}>{user?.name || user?.username}</div>
-                <div style={{ color: 'var(--muted)', fontSize: '0.75rem', marginTop: '8px', lineHeight: 1.5 }}>
+              <h3>🏠 About you</h3>
+              <div className="card-lime" style={{ padding: '20px', margin: '14px 0', borderRadius: '18px' }}>
+                <div style={{ fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', opacity: 0.7 }}>Your account</div>
+                <div style={{ fontSize: '1.15rem', fontWeight: 800, marginTop: '4px' }}>{user?.name || user?.username}</div>
+                <div style={{ fontSize: '0.78rem', marginTop: '8px', opacity: 0.8, lineHeight: 1.55 }}>
                   You're registered with Sentinel. Your psychologist will review your journals and vitals to support your well-being.
                 </div>
               </div>
-              <button className="btn-primary btn-full" onClick={() => goTo(1)}>Next Step →</button>
+              <button className="btn-primary btn-full" onClick={() => goTo(1)}>Next step →</button>
             </div>
           )}
 
-          {/* Step 1: First Journal */}
           {step === 1 && (
             <div>
-              <h3>📝 Your First Journal Entry</h3>
-              <p style={{ color: 'var(--muted)', fontSize: '0.8rem', marginBottom: '12px' }}>
+              <h3>📝 Your first journal entry</h3>
+              <p style={{ color: 'var(--muted)', fontSize: '0.82rem', marginBottom: '12px' }}>
                 Write a few lines about how you're feeling. Your psychologist will see an AI summary.
               </p>
               <textarea
                 value={journal} onChange={e => setJournal(e.target.value)}
                 placeholder="How are you feeling right now?"
                 rows={5}
-                style={{ width: '100%', padding: '12px', fontSize: '0.875rem', resize: 'none', marginBottom: '12px' }}
+                style={{ width: '100%', padding: '13px', fontSize: '0.875rem', resize: 'none', marginBottom: '12px', borderRadius: '14px' }}
               />
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="btn-primary" onClick={handleJournal} disabled={saving || !journal.trim()} style={{ flex: 1 }}>
-                  {saving ? 'Saving...' : 'Save & Continue'}
+                  {saving ? 'Saving…' : 'Save & continue'}
                 </button>
                 <button onClick={() => goTo(2)} style={{ flex: 1 }}>Skip for now</button>
               </div>
               <div style={{ marginTop: '8px' }}>
-                <button onClick={() => goTo(0)} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '0.75rem' }}>← Back</button>
+                <button className="btn-ghost" onClick={() => goTo(0)} style={{ fontSize: '0.75rem' }}>← Back</button>
               </div>
             </div>
           )}
 
-          {/* Step 2: Emergency Contact */}
           {step === 2 && (
             <div>
-              <h3>🛡️ Emergency Contact</h3>
-              <p style={{ color: 'var(--muted)', fontSize: '0.8rem', marginBottom: '12px' }}>
-                If you trigger a crisis alert, this trusted contact email is notified. Use the email they check most often.
+              <h3>🛡️ Emergency contact</h3>
+              <p style={{ color: 'var(--muted)', fontSize: '0.82rem', marginBottom: '12px' }}>
+                If you trigger a crisis alert, this trusted contact is notified at the 30-second mark. Use the email they check most often.
               </p>
               <input
                 type="email"
                 value={trustedContact} onChange={e => { setTrustedContact(e.target.value); if (tcError) setTcError('') }}
-                placeholder="trusted contact's email (e.g. mom@example.com)"
-                style={{ width: '100%', padding: '10px 12px', fontSize: '0.875rem', marginBottom: '12px' }}
+                placeholder="trusted person's email (e.g. mom@example.com)"
+                style={{ marginBottom: '8px' }}
               />
-              {tcError && <div style={{ color: 'var(--danger)', fontSize: '0.75rem', marginBottom: '12px' }}>{tcError}</div>}
+              {tcError && <div style={{ color: 'var(--danger)', fontSize: '0.75rem', marginBottom: '12px', fontWeight: 600 }}>{tcError}</div>}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="btn-primary" onClick={saveTrustedAndNext} style={{ flex: 1 }}>Save →</button>
                 <button onClick={() => goTo(3)} style={{ flex: 1 }}>Skip</button>
               </div>
               <div style={{ marginTop: '8px' }}>
-                <button onClick={() => goTo(1)} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '0.75rem' }}>← Back</button>
+                <button className="btn-ghost" onClick={() => goTo(1)} style={{ fontSize: '0.75rem' }}>← Back</button>
               </div>
             </div>
           )}
 
-          {/* Step 3: Contact Preference */}
           {step === 3 && (
             <div>
-              <h3>📱 Contact Preference</h3>
-              <p style={{ color: 'var(--muted)', fontSize: '0.8rem', marginBottom: '12px' }}>
+              <h3>📱 Contact preference</h3>
+              <p style={{ color: 'var(--muted)', fontSize: '0.82rem', marginBottom: '12px' }}>
                 How should your psychologist reach you?
               </p>
               <input
                 value={contactInfo} onChange={e => setContactInfo(e.target.value)}
                 placeholder="Mobile number or email"
-                style={{ width: '100%', padding: '10px 12px', fontSize: '0.875rem', marginBottom: '12px' }}
+                style={{ marginBottom: '12px' }}
               />
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="btn-primary" onClick={handleContact} style={{ flex: 1 }}>Save →</button>
                 <button onClick={() => goTo(4)} style={{ flex: 1 }}>Skip</button>
               </div>
               <div style={{ marginTop: '8px' }}>
-                <button onClick={() => goTo(2)} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '0.75rem' }}>← Back</button>
+                <button className="btn-ghost" onClick={() => goTo(2)} style={{ fontSize: '0.75rem' }}>← Back</button>
               </div>
             </div>
           )}
 
-          {/* Step 4: Done */}
           {step >= 4 && (
-            <div style={{ background: 'linear-gradient(135deg,var(--surface),var(--ok-soft))', border: '1px solid rgba(46,139,87,0.25)', borderRadius: '16px', padding: '32px', textAlign: 'center' }}>
+            <div className="card-lime" style={{ borderRadius: '20px', padding: '34px', textAlign: 'center' }}>
               <div style={{ fontSize: '3rem', marginBottom: '8px' }}>✅</div>
-              <div style={{ color: 'var(--ok)', fontSize: '1.5rem', fontWeight: 700 }}>You're all set!</div>
-              <div style={{ color: 'var(--muted)', fontSize: '0.85rem', marginTop: '8px', lineHeight: 1.6 }}>
+              <div style={{ fontSize: '1.5rem', fontWeight: 800 }}>You're all set!</div>
+              <div style={{ fontSize: '0.85rem', marginTop: '8px', lineHeight: 1.6, opacity: 0.8 }}>
                 Your dashboard is ready. Track your wellness, write journal entries, manage bookings, and more.
               </div>
               <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
-                <button onClick={() => goTo(3)} style={{ flex: 1, padding: '10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--muted)', cursor: 'pointer' }}>← Back</button>
-                <button className="btn-primary" onClick={finish} style={{ flex: 2, padding: '12px', fontSize: '1rem' }}>🚀 Open Dashboard</button>
+                <button onClick={() => goTo(3)} style={{ flex: 1, padding: '10px', background: 'rgba(0,0,0,0.08) !important', borderColor: 'transparent !important', color: 'var(--lime-ink) !important' }}>← Back</button>
+                <button className="btn-primary" onClick={finish} style={{ flex: 2, padding: '12px', fontSize: '0.95rem' }}>🚀 Open dashboard</button>
               </div>
             </div>
           )}
         </div>
 
-        {/* Bottom nav hint */}
         <div style={{ textAlign: 'center', marginTop: '12px', color: 'var(--faint)', fontSize: '0.7rem' }}>
           Click any completed step above to go back
         </div>

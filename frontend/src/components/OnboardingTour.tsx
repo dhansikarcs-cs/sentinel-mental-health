@@ -88,8 +88,8 @@ export default function OnboardingTour({ role }: { role: string }) {
           position: 'fixed', zIndex: 9992, width: maxW,
           top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
           background: 'var(--surface)', border: `1px solid ${step.color}55`,
-          borderRadius: '16px', padding: '20px', boxSizing: 'border-box',
-          boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
+          borderRadius: '22px', padding: '22px', boxSizing: 'border-box',
+          boxShadow: 'var(--shadow-lg)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
@@ -108,16 +108,17 @@ export default function OnboardingTour({ role }: { role: string }) {
         <div style={{ display: 'flex', gap: '8px', marginTop: '14px' }}>
           {stepIdx > 0 && (
             <button onClick={back}
-              style={{ padding: '8px 14px', fontSize: '0.8125rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--secondary)', cursor: 'pointer' }}>
+              style={{ padding: '8px 14px', fontSize: '0.8125rem' }}>
               ← Back
             </button>
           )}
           <button onClick={next}
-            style={{ marginLeft: 'auto', padding: '8px 18px', fontSize: '0.8125rem', background: 'var(--accent)', border: 'none', borderRadius: '8px', color: 'var(--on-accent)', fontWeight: 600, cursor: 'pointer' }}>
+            className="btn-primary"
+            style={{ marginLeft: 'auto', padding: '8px 18px', fontSize: '0.8125rem' }}>
             {stepIdx === steps.length - 1 ? '✅ Got it!' : 'Next →'}
           </button>
-          <button onClick={complete}
-            style={{ padding: '8px 12px', fontSize: '0.75rem', background: 'transparent', border: '1px solid var(--border)', borderRadius: '8px', color: 'var(--faint)', cursor: 'pointer' }}>
+          <button onClick={complete} className="btn-ghost"
+            style={{ padding: '8px 12px', fontSize: '0.75rem' }}>
             ✕
           </button>
         </div>

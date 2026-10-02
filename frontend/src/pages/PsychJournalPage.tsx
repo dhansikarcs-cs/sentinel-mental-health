@@ -10,25 +10,21 @@ export default function PsychJournalPage() {
   }, [])
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <h1>📓 Journal & Wellness</h1>
-
-      <div className="card" style={{ padding: '20px' }} data-tour="psych-journal">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-          {wellness?.mood && (
-            <>
-              <div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Today's Mood</div>
-                <div style={{ fontSize: '2rem' }}>{wellness.mood.emoji}</div>
-                <div style={{ fontSize: '0.8125rem', color: 'var(--secondary)' }}>{wellness.mood.label}</div>
-              </div>
-              <div style={{ width: '1px', height: '40px', background: 'var(--border)' }} />
-            </>
-          )}
-          <div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Journal Entries Today</div>
-            <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--heading)' }}>{wellness?.journals_today || 0}</div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>entries today</div>
+    <div className="space-y-4 animate-fade-in">
+      <div className="card-lime" style={{ padding: '24px 26px', display: 'flex', alignItems: 'center', gap: '18px', flexWrap: 'wrap' }}>
+        {wellness?.mood && (
+          <>
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '2.2rem' }}>{wellness.mood.emoji}</div>
+              <div style={{ fontSize: '0.68rem', fontWeight: 700, textTransform: 'capitalize', opacity: 0.8 }}>{wellness.mood.label}</div>
+            </div>
+            <div style={{ width: '1px', height: '48px', background: 'rgba(0,0,0,0.15)' }} />
+          </>
+        )}
+        <div style={{ flex: 1, minWidth: '180px' }}>
+          <h2 style={{ margin: 0, color: 'var(--lime-ink) !important' }}>Your own wellness matters too</h2>
+          <div style={{ fontSize: '0.82rem', opacity: 0.78 }}>
+            Reflect on your day, your sessions, and your capacity. {wellness?.journals_today ? `${wellness.journals_today} entr${wellness.journals_today === 1 ? 'y' : 'ies'} logged today ✓` : 'No entries today yet.'}
           </div>
         </div>
       </div>
@@ -62,42 +58,32 @@ function MyJournal() {
   }
 
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0
-  const charCount = text.length
 
   return (
     <div>
-      <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-        {(['write', 'history'] as const).map(st => (
-          <button key={st} onClick={() => setSubTab(st)}
-            style={{
-              padding: '8px 20px', borderRadius: '6px', border: `1px solid ${subTab === st ? 'var(--accent)' : 'var(--border)'}`,
-              background: subTab === st ? 'var(--accent-soft)' : 'transparent',
-              color: subTab === st ? 'var(--accent)' : 'var(--secondary)', fontSize: '0.8125rem', cursor: 'pointer',
-            }}>
-            {st === 'write' ? '✍️ Write Entry' : '📖 History'}
-          </button>
-        ))}
+      <div className="segmented-control">
+        <button className={`segmented-btn${subTab === 'write' ? ' active' : ''}`} onClick={() => setSubTab('write')}>✍️ Write</button>
+        <button className={`segmented-btn${subTab === 'history' ? ' active' : ''}`} onClick={() => setSubTab('history')}>📖 History ({entries.length})</button>
       </div>
 
       {subTab === 'write' ? (
-        <div className="card" style={{ padding: '20px' }}>
-          <div style={{ position: 'relative' }}>
-            <textarea value={text} onChange={e => setText(e.target.value)}
-              placeholder="Write freely about your day, thoughts, or sessions..."
-              style={{ width: '100%', minHeight: '220px', padding: '12px', fontSize: '0.875rem', resize: 'vertical' }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
-              <span style={{ color: 'var(--muted)', fontSize: '0.75rem' }}>{wordCount} words · {charCount} characters</span>
-              <button onClick={handleSave} disabled={saving || !text.trim()}
-                className="btn-primary" style={{ padding: '8px 24px' }}>
-                {saving ? 'Saving...' : '💾 Save Entry'}
-              </button>
-            </div>
+        <div className="card" style={{ padding: '24px' }}>
+          <textarea value={text} onChange={e => setText(e.target.value)}
+            placeholder="Write freely about your day, thoughts, or sessions…"
+            style={{ width: '100%', minHeight: '220px', padding: '15px', fontSize: '0.9rem', resize: 'vertical', lineHeight: 1.65, borderRadius: '16px' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
+            <span style={{ color: 'var(--faint)', fontSize: '0.72rem', fontWeight: 600 }}>{wordCount} words</span>
+            <button onClick={handleSave} disabled={saving || !text.trim()} className="btn-primary" style={{ padding: '9px 22px' }}>
+              {saving ? 'Saving…' : '💾 Save entry'}
+            </button>
           </div>
         </div>
       ) : (
         <div>
           {entries.length === 0 ? (
-            <p style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>No journal entries yet.</p>
+            <div className="card" style={{ textAlign: 'center', padding: '28px', color: 'var(--muted)' }}>
+              No entries yet — your reflective practice starts here. 🌱
+            </div>
           ) : (
             entries.map((e: any) => {
               const id = e.id
@@ -107,29 +93,23 @@ function MyJournal() {
                 <div key={id} style={{ marginBottom: '8px' }}>
                   <button onClick={() => setExpanded(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })}
                     style={{
-                      width: '100%', padding: '8px 12px', background: open ? 'var(--accent-soft)' : 'var(--surface)',
-                      border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`, borderRadius: '8px',
-                      color: 'var(--text)', fontSize: '0.8125rem', cursor: 'pointer', textAlign: 'left',
+                      width: '100%', padding: '10px 14px', background: open ? 'var(--accent-soft)' : 'var(--surface)',
+                      border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`, borderRadius: '14px',
+                      color: 'var(--text)', fontSize: '0.82rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left',
                       display: 'flex', alignItems: 'center', gap: '8px',
                     }}>
                     <span>📄 {ts}</span>
                     <span style={{ marginLeft: 'auto', color: 'var(--muted)', fontSize: '0.7rem' }}>{open ? 'Collapse' : 'Expand'}</span>
                   </button>
                   {open && (
-                    <div style={{ background: 'linear-gradient(135deg,var(--surface),var(--surface-soft))', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px', margin: '2px 0 0 0' }}>
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '16px', padding: '16px', margin: '4px 0 0', boxShadow: 'var(--shadow)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
                         {e.ai_source && (
-                          <span style={{
-                            background: `${sourceColor(e.ai_source)}22`, color: sourceColor(e.ai_source),
-                            fontSize: '0.6rem', padding: '1px 6px', borderRadius: '3px', fontWeight: 600,
-                            border: `1px solid ${sourceColor(e.ai_source)}44`,
-                          }}>{e.ai_source.toUpperCase()}</span>
+                          <span className="badge-theme" style={{ color: sourceColor(e.ai_source), borderColor: `${sourceColor(e.ai_source)}55` }}>{e.ai_source.toUpperCase()}</span>
                         )}
-                        {e.emotions && (
-                          <span style={{ fontSize: '0.65rem', color: 'var(--secondary)' }}>Emotions: {e.emotions}</span>
-                        )}
+                        {e.emotions && <span style={{ fontSize: '0.65rem', color: 'var(--secondary)' }}>Emotions: {e.emotions}</span>}
                       </div>
-                      <div style={{ color: 'var(--text)', fontSize: '0.8125rem', lineHeight: 1.6 }}>{e.summary}</div>
+                      <div style={{ color: 'var(--text)', fontSize: '0.84rem', lineHeight: 1.65 }}>{e.summary}</div>
                     </div>
                   )}
                 </div>

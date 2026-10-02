@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.core.api_response import ok
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
 from app.core.input_validator import validate_sensor_data
@@ -145,6 +146,27 @@ def list_patient_signals(
     )
 
 
+@router.get("/stress-spikes")
+def list_own_stress_spikes(
+    days: int = 30,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Patient view: stress spikes from their own ring, with day+time of each."""
+    return ok(data=_stress_spikes(db, user.username, days))
+
+
+@router.get("/stress-spikes/{username}")
+def list_patient_stress_spikes(
+    username: str,
+    days: int = 30,
+    user: User = Depends(require_role("psychologist", "admin")),
+    db: Session = Depends(get_db),
+):
+    """Clinician view: when this client's stress spiked, and when it tends to."""
+    return ok(data=_stress_spikes(db, username, days))
+
+
 @router.get("/vendors")
 def list_vendors(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     vendors = (
@@ -154,3 +176,162 @@ def list_vendors(user: User = Depends(get_current_user), db: Session = Depends(g
         .all()
     )
     return {"vendors": [v[0] for v in vendors]}
+
+
+def _stress_spikes(db: Session, username: str, days: int = 30) -> dict:
+    """Find stress spikes with explicit day + time for each.
+
+    A spike = a reading whose stress crosses (max(55, patient median + 18))
+    while sitting at least 12 points above the patient's baseline. Each spike
+    carries the exact logged day/time so clinicians can see WHEN stress hits,
+    plus hour-of-day and weekday histograms for pattern-spotting.
+
+    Reads from BOTH stress sources — the normalized PhysiologicalSignal
+    table and the legacy RingSensorLog that devices/seed write into —
+    and merges them so no source is silently missed.
+    """
+    from collections import Counter
+    from datetime import datetime, timedelta
+
+    from app.models.ring import RingSensorLog
+
+    days = max(1, min(int(days or 30), 365))
+    since = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+
+    def _rows(model, ts_col):
+        return (
+            db.query(model)
+            .filter(
+                model.patient_username == username,
+                ts_col >= since,
+            )
+            .all()
+        )
+
+    # (stress, heart_rate, hrv, logged_at) tuples from every source
+    merged: list[tuple] = []
+    for r in _rows(PhysiologicalSignal, PhysiologicalSignal.logged_at):
+        if r.stress is not None:
+            merged.append((int(r.stress), int(r.heart_rate or 0), float(r.hrv_rmssd or 0), r.logged_at))
+    for r in _rows(RingSensorLog, RingSensorLog.logged_at):
+        if r.stress:
+            merged.append((int(r.stress), int(r.bpm or 0), float(r.hrv or 0), r.logged_at))
+    merged.sort(key=lambda t: t[3])
+
+    if not merged:
+        return {
+            "patient": username,
+            "window_days": days,
+            "reading_count": 0,
+            "baseline": None,
+            "threshold": None,
+            "spikes": [],
+            "by_hour": {},
+            "by_weekday": {},
+            "worst": None,
+            "hourly": [],
+            "daily": [],
+        }
+
+    stresses = [m[0] for m in merged]
+    srt = sorted(stresses)
+    median = srt[len(srt) // 2] if srt else 0
+    threshold = max(55, median + 18)
+
+    def _dt(iso: str) -> datetime:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+
+    spikes: list[dict] = []
+    for stress, hr, hrv, iso in merged:
+        if stress < threshold:
+            continue
+        t = _dt(iso)
+        spikes.append(
+            {
+                "stress": stress,
+                "heart_rate": hr,
+                "hrv": round(hrv, 1),
+                "logged_at": iso,
+                "day": t.strftime("%a %d %b"),
+                "iso_day": t.strftime("%Y-%m-%d"),
+                "time": t.strftime("%H:%M"),
+                "hour": t.hour,
+                "weekday": t.strftime("%A"),
+                "severity": "severe"
+                if stress >= threshold + 25
+                else "high"
+                if stress >= threshold + 10
+                else "moderate",
+            }
+        )
+
+    # Collapse runs of adjacent readings into single spike episodes: keep the
+    # peak of each cluster so a 2-hour sustained rise doesn't read as 8 spikes.
+    episodes: list[dict] = []
+    for s in spikes:
+        if episodes:
+            prev = _dt(episodes[-1]["logged_at"])
+            cur = _dt(s["logged_at"])
+            if (cur - prev) <= timedelta(hours=2):
+                if s["stress"] > episodes[-1]["stress"]:
+                    episodes[-1] = s
+                continue
+        episodes.append(s)
+
+    by_hour = Counter(s["hour"] for s in episodes)
+    by_weekday = Counter(s["weekday"] for s in episodes)
+    worst = max(episodes, key=lambda s: s["stress"]) if episodes else None
+
+    # Hour-of-day profile: average + peak stress per clock hour across the
+    # window — feeds the rounded hourly curve on the insights page.
+    hour_acc: dict[int, list[int]] = {}
+    day_acc: dict[str, list[tuple[int, str]]] = {}
+    for stress, _hr, _hrv, iso in merged:
+        t = _dt(iso)
+        hour_acc.setdefault(t.hour, []).append(stress)
+        day_acc.setdefault(t.strftime("%Y-%m-%d"), []).append((stress, iso))
+
+    hourly = []
+    for h in range(24):
+        vals = hour_acc.get(h) or []
+        hourly.append(
+            {
+                "hour": h,
+                "avg": round(sum(vals) / len(vals), 1) if vals else None,
+                "max": max(vals) if vals else None,
+                "n": len(vals),
+            }
+        )
+
+    # Day-by-day summary: average, peak (with its time) and spike count.
+    daily = []
+    for iso_day in sorted(day_acc):
+        vals = day_acc[iso_day]
+        stresses = [v[0] for v in vals]
+        peak_iso = max(vals, key=lambda v: v[0])[1]
+        pt = _dt(peak_iso)
+        daily.append(
+            {
+                "iso_day": iso_day,
+                "day": pt.strftime("%a %d %b"),
+                "avg": round(sum(stresses) / len(stresses), 1),
+                "peak": max(stresses),
+                "peak_time": pt.strftime("%H:%M"),
+                "n": len(stresses),
+                "spikes": sum(1 for s in episodes if s["iso_day"] == iso_day),
+            }
+        )
+
+    return {
+        "patient": username,
+        "window_days": days,
+        "reading_count": len(merged),
+        "baseline": median,
+        "threshold": threshold,
+        "spikes": episodes,
+        "by_hour": {str(h): c for h, c in sorted(by_hour.items())},
+        "by_weekday": dict(by_weekday.most_common()),
+        "worst": worst,
+        "hourly": hourly,
+        "daily": daily,
+    }

@@ -7,6 +7,10 @@ from app.core.encrypted_fields import EncryptedText
 class User(Base):
     __tablename__ = "patient_profiles"
 
+    # NOTE: email is stored plaintext (not EncryptedText) because it must be
+    # queryable for uniqueness and verification lookups. Clinical fields stay
+    # encrypted.
+
     username = Column(String, primary_key=True)
     password_hash = Column(String, nullable=False)
     name = Column(String, nullable=False)
@@ -30,6 +34,12 @@ class User(Base):
     updated_at = Column(String, default="")
     deleted_at = Column(String, nullable=True, default=None)
     deleted_by = Column(String, nullable=True, default=None)
+    # Production signup fields
+    email = Column(String, default="", index=True)
+    license_number = Column(String, default="")
+    email_verified_at = Column(String, default="")
+    verification_token = Column(String, default="")
+    verification_expires = Column(String, default="")
 
     @property
     def is_deleted(self) -> bool:

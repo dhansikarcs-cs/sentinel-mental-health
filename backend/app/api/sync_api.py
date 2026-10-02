@@ -34,15 +34,19 @@ def sync_offline_journals(
 ):
     synced = []
     for entry in entries:
-        existing = (
+        # raw_content is encrypted with a random IV per write, so equality can
+        # only be checked on decrypted values in Python — never in a SQL filter.
+        # Narrow by (patient, timestamp) first, then compare plaintext.
+        candidates = (
             db.query(JournalEntry)
             .filter(
                 JournalEntry.patient_username == user.username,
-                JournalEntry.raw_content == entry.raw_content,
                 JournalEntry.timestamp == entry.timestamp,
+                JournalEntry.deleted_at.is_(None),
             )
-            .first()
+            .all()
         )
+        existing = next((j for j in candidates if (j.raw_content or "") == entry.raw_content), None)
         if existing:
             synced.append({"client_id": entry.client_id, "server_id": existing.id, "status": "duplicate"})
             continue

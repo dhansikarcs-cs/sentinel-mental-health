@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import decode_access_token
+from app.core.structured_errors import ErrorCode, err
 from app.core.token_blacklist import token_blacklist
 from app.models.ring_device import RingDevice
 from app.models.user import User
@@ -26,28 +27,28 @@ def get_current_user(
     if not token:
         token = request.cookies.get("access_token")
     if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHORIZED, "Not authenticated")
     payload = decode_access_token(token)
     if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHORIZED, "Invalid token")
 
     jti = payload.get("jti", "")
     if token_blacklist.is_revoked(jti):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.TOKEN_REVOKED, "Token revoked")
 
     username = payload.get("sub")
     if not username:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHORIZED, "Invalid token")
     user = db.query(User).filter(User.username == username).first()
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHORIZED, "User not found")
     return user
 
 
 def require_role(*roles: str):
     def _check(user: User = Depends(get_current_user)):
         if user.role not in roles:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+            raise err(status.HTTP_403_FORBIDDEN, ErrorCode.INSUFFICIENT_PERMISSIONS, "Insufficient permissions")
         return user
 
     return _check

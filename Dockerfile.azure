@@ -1,0 +1,46 @@
+# ── Sentinel — single-container build for Azure App Service ──────────────
+# One container serves BOTH the API and the built frontend (main.py already
+# serves frontend/dist as an SPA). Build from the REPO ROOT:
+#
+#   docker build -f Dockerfile.azure -t sentinel-azure .
+#
+# Run locally to sanity-check:
+#   docker run -p 8000:8000 --env-file .env -e JWT_SECRET=dev-secret sentinel-azure
+#
+# ── Stage 1: build the frontend ──────────────────────────────────────────
+FROM node:20-alpine AS web-build
+WORKDIR /web
+
+# npm ci = reproducible install from the lockfile (fails if out of sync)
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build          # emits /web/dist
+
+# ── Stage 2: backend + static frontend ──────────────────────────────────
+FROM python:3.11-slim
+
+RUN addgroup --system --gid 1001 sentinel && adduser --system --uid 1001 --ingroup sentinel sentinel
+
+WORKDIR /app
+
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY backend/ .
+COPY --from=web-build /web/dist /app/frontend/dist
+COPY azure-startup.sh /app/azure-startup.sh
+
+RUN mkdir -p /app/data && chown -R sentinel:sentinel /app && chmod +x /app/azure-startup.sh
+
+USER sentinel
+
+# Azure App Service (Linux) routes traffic to the port set in WEBSITES_PORT
+# (configured via appsettings). The startup script resolves the priority:
+# WEBSITES_PORT → PORT → 8000.
+ENV PORT=8000
+EXPOSE 8000
+
+# `sh` prefix so it works even if the exec bit was lost on a Windows checkout.
+CMD ["sh", "/app/azure-startup.sh"]

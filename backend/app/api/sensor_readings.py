@@ -44,7 +44,9 @@ def get_sensor_readings(user: User = Depends(get_current_user), db: Session = De
 
 @router.get("/patient/{username}", response_model=list[SensorReadingResponse])
 def get_patient_sensor_readings(
-    username: str, user: User = Depends(require_role("psychologist")), db: Session = Depends(get_db)
+    username: str,
+    user: User = Depends(require_role("psychologist", "admin")),
+    db: Session = Depends(get_db),
 ):
     return (
         db.query(SensorReading)

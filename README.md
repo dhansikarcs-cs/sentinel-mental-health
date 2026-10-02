@@ -75,29 +75,101 @@ Tokens are stored as SHA-256 hashes, compared with `hmac.compare_digest`, and ho
 
 ---
 
-## Quick Start
+## Quick Start — Run It Locally
 
-### Backend
+### Prerequisites
+
+| Tool | Version | Notes |
+|------|---------|-------|
+| Python | **3.11** (3.10–3.12 ok — avoid 3.13+) | ML deps (scikit-learn/numpy) are pinned & tested on 3.11 |
+| Node.js | 18+ (20 recommended) | frontend build + dev server |
+| npm | ships with Node | |
+
+### 0. One-time setup
+
+```bash
+# 1) Backend virtualenv (make sure it's Python 3.11!)
+cd backend
+python3.11 -m venv venv          # Windows: python -m venv venv
+source venv/bin/activate         # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+# pip install -r requirements-bridge.txt   # only needed for the BLE ring bridge
+# ⚠️ If your project lives in a cloud-synced folder (iCloud Drive/Downloads,
+# OneDrive), prefer a venv OUTSIDE it:  python3.11 -m venv --copies ~/.venvs/sentinel
+
+# 2) Backend env file — backend/.env (dev values are fine locally; see .env.example at repo root)
+cat > .env <<'EOF'
+JWT_SECRET=dev-local-put-any-long-random-string-here
+ENCRYPTION_PASSPHRASE=dev-local-passphrase
+ENCRYPTION_SALT=9d38a7c1e5b204f6a1d3c8e7b9f20a54
+ENCRYPTION_REQUIRED=true
+DATABASE_URL=sqlite:///./data/sentinel.db
+DEBUG=true
+EOF
+
+# 3) Frontend dependencies
+cd ../frontend
+npm install
+```
+
+> The app **refuses to boot** with the default JWT secret (unless `DEBUG=true`) —
+> the `.env` above satisfies both. `.env` is git-ignored; never commit real secrets.
+
+### 1. Seed demo data (once)
 
 ```bash
 cd backend
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-pip install -r requirements-bridge.txt   # only needed for BLE ring bridge
-python seed_demo.py                        # seed demo accounts
-uvicorn app.main:app --reload --port 8000
+python seed_clinic.py      # 30 teen clients, 12 months of history
+                           # ⚠️ WIPES existing local data (also clears login lockouts)
+# or: python seed_demo.py  # smaller demo dataset
 ```
 
-Health check: `http://localhost:8000/health`
+### 2. Run the app
 
-### Frontend
+**Option A — one URL (simplest).** Build the frontend once; the backend serves it
+as an SPA, so there is only one process and one port:
 
 ```bash
-cd frontend
-npm install
-npm run dev
+cd frontend && npm run build      # emits frontend/dist — only needed after frontend changes
+cd ../backend
+python -m uvicorn app.main:app --reload --port 8000
 ```
+
+→ open **http://localhost:8000** · health check: **http://localhost:8000/health**
+
+**Option B — hot-reload dev mode (two terminals).** Vite gives instant frontend
+refresh and proxies `/api` calls to the backend:
+
+```bash
+# terminal 1 — API
+cd backend && python -m uvicorn app.main:app --reload --port 8000
+
+# terminal 2 — frontend dev server
+cd frontend && npm run dev        # open http://localhost:5173
+```
+
+**Port 8000 already taken by another project?** Run the backend elsewhere and point
+the Vite proxy at it:
+
+```bash
+python -m uvicorn app.main:app --reload --port 8001       # terminal 1
+VITE_API_TARGET=http://localhost:8001 npm run dev         # terminal 2
+```
+
+### 3. Log in
+
+`admin / password123` · psychologists `cel / 1234`, `marcus / 4321` · clients `maya_k / sentinel123`
+(full table below).
+
+### Local troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `Refusing to start: JWT_SECRET is still the default` | Create `backend/.env` (step 0) or set `DEBUG=true` |
+| `Address already in use` on port 8000 | Another app owns the port — use `--port 8001` (+ `VITE_API_TARGET` in Option B) or free it: `lsof -ti :8000 \| xargs kill` |
+| `ModuleNotFoundError: sklearn` or wheel build errors | Wrong Python version — recreate the venv with `python3.11` |
+| Login says account is locked | Re-run `python seed_clinic.py` (clears lockouts; wipes local data) |
+| AI summaries say "unavailable" | Normal without Ollama/Groq/Azure keys — rule-based fallback is used |
 
 ### Full stack (Docker)
 
@@ -116,13 +188,17 @@ cd backend && python -m pytest     # backend test suite
 
 ---
 
-## Accounts (demo seed)
+## Accounts (clinic seed — `python seed_clinic.py`)
 
-| Role | Username | Notes |
-|------|----------|-------|
-| Patient | `cel` | `123456` |
-| Psychologist | `alaya` | `654321` |
-| Demo ring | `RING-DEMO-001` | paired to `alaya` (device token via `/ring/pair`) |
+| Role | Username | Password | Notes |
+|------|----------|----------|-------|
+| Admin | `admin` | `password123` | Clinic oversight console (directory, audit log, crises) |
+| Psychologist | `cel` | `1234` | Dr. Celeste Raine — 10 teen clients |
+| Psychologist | `marcus` | `4321` | Dr. Marcus Vale — 10 teen clients |
+| Teen client | `maya_k` | `sentinel123` | Sample client (all 30 clients use `sentinel123`) |
+
+30 teen clients with 12 months of journals, moods, ring vitals, clinical notes and crisis history.
+Re-seed anytime with `python seed_clinic.py` (also clears any login lockouts).
 
 ---
 

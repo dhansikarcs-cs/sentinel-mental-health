@@ -28,7 +28,12 @@ class BookingResponse(BaseModel):
 
 
 class BookingUpdate(BaseModel):
-    status: Literal["Pending", "Approved", "Rejected", "Cancelled"]
+    status: Literal["Pending", "Approved", "Rejected", "Cancelled", "Completed"]
+
+
+class BookingReschedule(BaseModel):
+    date: str
+    time: str
 
 
 class AvailabilityCreate(BaseModel):

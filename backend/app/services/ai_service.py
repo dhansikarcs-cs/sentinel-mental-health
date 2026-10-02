@@ -51,6 +51,76 @@ NOTE_SYNTHESIS_PROMPT_V1 = (
 )
 
 
+_azure_lock = Lock()
+
+
+def _azure_configured() -> bool:
+    return bool(settings.azure_ai_key) and bool(settings.azure_ai_endpoint)
+
+
+def _azure_url_and_headers() -> tuple[str, dict, dict] | None:
+    """Build (url, headers, body-overrides) for the configured Azure resource.
+
+    Supports both endpoint styles:
+      • Azure AI Foundry  https://<res>.services.ai.azure.com  → OpenAI-compatible
+        route /models/chat/completions (model = MODEL name, e.g. gpt-5.4-mini)
+      • Azure OpenAI      https://<res>.openai.azure.com       → classic
+        route /openai/deployments/<deployment>/chat/completions (+ api-version)
+    """
+    if not _azure_configured():
+        return None
+    ep = settings.azure_ai_endpoint.strip().rstrip("/")
+    if not ep.startswith(("http://", "https://")):
+        ep = f"https://{ep}"
+    headers = {"Content-Type": "application/json", "api-key": settings.azure_ai_key}
+    if ".services.ai.azure.com" in ep:
+        url = f"{ep}/models/chat/completions"
+        body = {"model": settings.azure_deployment}
+    else:
+        # classic Azure OpenAI resource
+        url = f"{ep}/openai/deployments/{settings.azure_deployment}/chat/completions?api-version={settings.azure_api_version}"
+        body = {}
+    return url, headers, body
+
+
+def _query_azure(prompt: str, timeout: int = 20, prompt_version: str = "") -> str:
+    """Azure AI Foundry / Azure OpenAI chat completions. Returns '' on any failure."""
+    cfg = _azure_url_and_headers()
+    if not cfg:
+        return ""
+    url, headers, body_extra = cfg
+    start = time.perf_counter()
+    try:
+        payload = {
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens": settings.azure_max_tokens,
+            **body_extra,
+        }
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        result = json.loads(resp.read().decode())
+        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+        logger.info(
+            "ai_request provider=azure ok=true latency_ms=%s prompt_version=%s prompt_len=%s",
+            latency_ms,
+            prompt_version,
+            len(prompt),
+            extra={"extra_fields": {"provider": "azure", "ok": True, "latency_ms": latency_ms}},
+        )
+        return (result.get("choices") or [{}])[0].get("message", {}).get("content", "").strip()
+    except Exception as e:
+        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+        logger.info(
+            "ai_request provider=azure ok=false latency_ms=%s prompt_version=%s error=%s",
+            latency_ms,
+            prompt_version,
+            e,
+            extra={"extra_fields": {"provider": "azure", "ok": False, "latency_ms": latency_ms, "error": str(e)}},
+        )
+        return ""
+
+
 def _query_ollama(prompt: str, timeout: int = 20, prompt_version: str = "") -> str | None:
     global _ollama_last_call
     global _ollama_consecutive_failures
@@ -157,10 +227,145 @@ def _query_ai(prompt: str, timeout: int = 20, prompt_version: str = "") -> str:
     result = _query_ollama(prompt, timeout=timeout, prompt_version=prompt_version)
     if result:
         return result
+    result = _query_azure(prompt, timeout=timeout, prompt_version=prompt_version)
+    if result:
+        return result
     result = _query_groq(prompt, timeout=timeout, prompt_version=prompt_version)
     if result:
         return result
     return ""
+
+
+# ── Azure AI Foundry hosted agent (Responses API + agent_reference) ─────────
+
+_agent_client_cache: dict = {}
+
+AGENT_SCOPE_RULES = """You are Sentinel's AI agent embedded in a clinical mental-health platform.
+Rules you must always follow:
+- You are a supportive companion, NOT a therapist and NOT an emergency service.
+- Never provide medical diagnoses, medication advice, or replace professional care.
+- If a user expresses intent to harm themselves or others, respond with empathy and
+  immediately direct them to the in-app Emergency button and local crisis services.
+- Keep replies warm, brief (under 180 words unless asked for depth), and concrete.
+- Never ask the user to resend sensitive identifiers (full name, address, ID numbers).
+"""
+
+
+def _azure_agent_configured() -> bool:
+    return bool(settings.azure_agent_endpoint) and bool(settings.azure_agent_name)
+
+
+def _get_agent_openai_client():
+    """Build (and cache) the Foundry project's OpenAI-compatible client."""
+    if not _azure_agent_configured():
+        return None
+    cached = _agent_client_cache.get("client")
+    if cached is not None:
+        return cached
+    try:
+        from azure.ai.projects import AIProjectClient
+        from azure.identity import DefaultAzureCredential
+
+        # The Foundry project SDK requires Entra-token credentials: managed
+        # identity on App Service, `az login` locally. API keys are NOT
+        # accepted for agent_reference calls.
+        credential = DefaultAzureCredential()
+        project_client = AIProjectClient(
+            endpoint=settings.azure_agent_endpoint.strip().rstrip("/"),
+            credential=credential,
+        )
+        client = project_client.get_openai_client()
+        _agent_client_cache["client"] = client
+        return client
+    except Exception as e:  # import errors, bad endpoint, auth failures
+        logger.warning("azure_agent client init failed: %s", e)
+        return None
+
+
+def _query_azure_agent(
+    prompt: str,
+    timeout: int = 30,
+    prompt_version: str = "",
+    history: list[dict] | None = None,
+) -> str:
+    """Call the hosted Foundry agent via the Responses API. Returns '' on failure."""
+    if not _azure_agent_configured():
+        return ""
+    mode = settings.azure_agent_mode.lower()
+    if mode == "off":
+        return ""
+    client = _get_agent_openai_client()
+    if client is None:
+        return ""
+    start = time.perf_counter()
+    try:
+        agent_ref = {"name": settings.azure_agent_name, "type": "agent_reference"}
+        if settings.azure_agent_version:
+            agent_ref["version"] = settings.azure_agent_version
+        input_items: list[dict] = []
+        for item in (history or [])[-8:]:
+            role = item.get("role", "user")
+            if role in ("user", "assistant") and item.get("content"):
+                input_items.append({"role": role, "content": str(item["content"])[:4000]})
+        input_items.append({"role": "user", "content": prompt})
+        response = client.responses.create(
+            input=input_items,
+            extra_body={"agent_reference": agent_ref},
+            timeout=timeout,
+        )
+        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+        text = (getattr(response, "output_text", "") or "").strip()
+        logger.info(
+            "ai_request provider=azure_agent ok=true latency_ms=%s prompt_version=%s prompt_len=%s",
+            latency_ms,
+            prompt_version,
+            len(prompt),
+            extra={"extra_fields": {"provider": "azure_agent", "ok": True, "latency_ms": latency_ms}},
+        )
+        return text
+    except Exception as e:
+        latency_ms = round((time.perf_counter() - start) * 1000, 2)
+        logger.info(
+            "ai_request provider=azure_agent ok=false latency_ms=%s prompt_version=%s error=%s",
+            latency_ms,
+            prompt_version,
+            e,
+            extra={"extra_fields": {"provider": "azure_agent", "ok": False, "latency_ms": latency_ms, "error": str(e)}},
+        )
+        # One failed attempt shouldn't leave a broken client cached (e.g. expired creds).
+        _agent_client_cache.pop("client", None)
+        return ""
+
+
+def _query_ai_with_agent(
+    prompt: str, timeout: int = 30, prompt_version: str = "", history: list[dict] | None = None
+) -> tuple[str, str]:
+    """Chain: local Ollama → Foundry agent (mode auto) → keyed Azure → Groq.
+
+    Returns ``(text, provider_name)`` so callers can badge the answer
+    honestly. provider is one of: azure_agent | ollama | azure | groq | rule.
+    ``history`` (list of {role, content}) is only used by the agent provider,
+    which supports multi-turn input via the Responses API.
+    """
+    mode = settings.azure_agent_mode.lower()
+    if mode == "on":
+        result = _query_azure_agent(prompt, timeout=timeout, prompt_version=prompt_version, history=history)
+        if result:
+            return result, "azure_agent"
+        text = _query_ai(prompt, timeout=timeout, prompt_version=prompt_version)
+        return (text, "") if not text else (text, "cloud")
+    if mode == "off":
+        text = _query_ai(prompt, timeout=timeout, prompt_version=prompt_version)
+        return (text, "") if not text else (text, "cloud")
+    # auto: keep local-first privacy default, agent as strong cloud fallback
+    result = _query_ollama(prompt, timeout=timeout, prompt_version=prompt_version)
+    if result:
+        return result, "ollama"
+    result = _query_azure_agent(prompt, timeout=timeout, prompt_version=prompt_version, history=history)
+    if result:
+        return result, "azure_agent"
+    text = _query_ai(prompt, timeout=timeout, prompt_version=prompt_version)
+    return (text, "") if not text else (text, "cloud")
 
 
 def _is_raw_echo(output: str, original: str) -> bool:
@@ -226,6 +431,9 @@ def summarize_journal(text: str, mode: str = "patient") -> dict:
 
     raw = _query_ollama(prompt, timeout=15, prompt_version=prompt_version)
     source = "ollama"
+    if not raw or _is_raw_echo(raw, text):
+        raw = _query_azure(prompt, prompt_version=prompt_version)
+        source = "azure"
     if not raw or _is_raw_echo(raw, text):
         raw = _query_groq(prompt, prompt_version=prompt_version)
         source = "groq"

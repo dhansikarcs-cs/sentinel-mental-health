@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { api } from '../api/client'
+import CustomSelect from '../components/CustomSelect'
 import { COUNTRIES } from '../constants'
 
 const CLINIC_CODES = ['SENTINEL-01', 'SENTINEL-02', 'SENTINEL-03', 'SENTINEL-04', 'SENTINEL-05']
@@ -11,7 +12,6 @@ const PROFESSIONAL_CODE_CLINICS: Record<string, string> = {
   'PSY-0004': 'SENTINEL-04',
   'PSY-0005': 'SENTINEL-05',
 }
-const PROFESSIONAL_CODES = Object.keys(PROFESSIONAL_CODE_CLINICS)
 
 const PASSWORD_RULES: { label: string; test: (pw: string) => boolean }[] = [
   { label: 'At least 6 characters', test: pw => pw.length >= 6 },
@@ -29,12 +29,11 @@ function todayLocalISO(): string {
 
 export default function Register() {
   const navigate = useNavigate()
-  const [form, setForm] = useState({ username: '', password: '', confirmPassword: '', name: '', dob: '', occupation: '', role: 'patient', clinic_code: '', professional_code: '', assigned_psych: '', country: '' })
+  const [form, setForm] = useState({ username: '', password: '', confirmPassword: '', name: '', dob: '', occupation: '', role: 'patient', clinic_code: '', professional_code: '', assigned_psych: '', country: '', email: '', invite_code: '', license_number: '' })
   const [psychologists, setPsychologists] = useState<any[]>([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPw, setShowPw] = useState(false)
-  const [showConfirmPw, setShowConfirmPw] = useState(false)
   const [submitted, setSubmitted] = useState(false)
 
   useEffect(() => {
@@ -58,7 +57,7 @@ export default function Register() {
     const u = form.username.trim()
     if (!u) errs.username = 'Username is required'
     else if (u.length < 3) errs.username = 'Username must be at least 3 characters'
-    else if (!/^[a-zA-Z0-9_]+$/.test(u)) errs.username = 'Only letters, numbers and underscores allowed'
+    else if (!/^[a-zA-Z0-9_.]+$/.test(u)) errs.username = 'Only letters, numbers, dots and underscores allowed'
     const n = form.name.trim()
     if (!n) errs.name = 'Full name is required'
     else if (n.length < 2) errs.name = 'Name must be at least 2 characters'
@@ -73,8 +72,13 @@ export default function Register() {
       else if (d.getTime() < min.getTime()) errs.dob = 'Date of birth seems too far in the past'
     }
     if (!form.occupation.trim()) errs.occupation = form.role === 'psychologist' ? 'Specialisation is required' : 'Occupation is required'
-    if (!form.country) errs.country = 'Select your country (birthday reminders use it)'
-    if (form.role === 'psychologist' && (!form.professional_code || !PROFESSIONAL_CODE_CLINICS[form.professional_code.toUpperCase()])) errs.professional_code = 'Enter the professional code we gave you'
+    if (!form.country) errs.country = 'Select your country'
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) errs.email = 'Enter a valid email address'
+    if (form.role === 'psychologist') {
+      if (!form.license_number.trim()) errs.license_number = 'Your license / registration number is required'
+      else if (form.license_number.trim().length < 4) errs.license_number = 'That license number looks too short'
+      if (!form.invite_code.trim()) errs.invite_code = 'Enter the invite code from your clinic admin'
+    }
     if (form.role === 'patient' && !form.clinic_code) errs.clinic = 'Select your clinic'
     if (form.role === 'patient' && form.clinic_code && !form.assigned_psych) errs.psych = 'Choose your psychologist'
     return errs
@@ -82,8 +86,10 @@ export default function Register() {
 
   function InlineError({ msg }: { msg?: string }) {
     if (!msg) return null
-    return <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '4px' }}>⚠ {msg}</div>
+    return <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '4px', fontWeight: 600 }}>⚠ {msg}</div>
   }
+
+  const errs = fieldErrors()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -92,14 +98,31 @@ export default function Register() {
     const pwErrs = passwordErrors(form.password)
     if (pwErrs.length) { setError(`Password must contain ${pwErrs.join(', ')}`); return }
     if (form.password !== form.confirmPassword) { setError('Passwords do not match'); return }
-    const errs = fieldErrors()
-    const firstKey = Object.keys(errs)[0]
-    if (firstKey) { setError(`Please fix: ${errs[firstKey]}`); return }
+    const fe = fieldErrors()
+    const firstKey = Object.keys(fe)[0]
+    if (firstKey) { setError(`Please fix: ${fe[firstKey]}`); return }
     setLoading(true)
     try {
-      const derivedClinic = form.role === 'psychologist' ? PROFESSIONAL_CODE_CLINICS[form.professional_code.toUpperCase()] : form.clinic_code
-      await api.register({ username: form.username, password: form.password, name: form.name, role: form.role, clinic_code: derivedClinic, dob: form.dob, country: form.country, occupation: form.occupation, professional_code: form.professional_code, assigned_psych: form.assigned_psych || undefined })
-      navigate('/login')
+      const isPsych = form.role === 'psychologist'
+      const legacyClinic = isPsych ? PROFESSIONAL_CODE_CLINICS[form.professional_code.toUpperCase()] : undefined
+      const derivedClinic = isPsych ? (legacyClinic || '') : form.clinic_code
+      await api.register({
+        username: form.username,
+        password: form.password,
+        name: form.name,
+        role: form.role,
+        clinic_code: derivedClinic,
+        dob: form.dob,
+        country: form.country,
+        occupation: form.occupation,
+        email: form.email.trim() || undefined,
+        assigned_psych: form.assigned_psych || undefined,
+        invite_code: isPsych ? form.invite_code.trim() || undefined : undefined,
+        license_number: isPsych ? form.license_number.trim() : undefined,
+        // legacy path still supported when no invite code is used
+        professional_code: isPsych && !form.invite_code.trim() ? form.professional_code : undefined,
+      })
+      navigate('/login', { state: { justRegistered: form.username, email: form.email.trim() } })
     } catch (err: any) {
       setError(err.message || 'Registration failed')
     } finally {
@@ -108,168 +131,191 @@ export default function Register() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ padding: '20px' }}>
-      <form onSubmit={handleSubmit} className="card" style={{ padding: '32px', width: '100%', maxWidth: '400px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--accent)', letterSpacing: '-0.01em' }}>Register</div>
+    <div className="min-h-screen flex items-center justify-center" style={{ padding: '24px', background: 'var(--bg)' }}>
+      <div className="login-blob login-blob-1" style={{
+        position: 'fixed', top: '-160px', left: '-160px', width: '460px', height: '460px',
+        borderRadius: '999px', background: 'radial-gradient(circle, var(--lime) 0%, transparent 70%)',
+        opacity: 0.4, pointerEvents: 'none',
+      }} />
+      <form onSubmit={handleSubmit} className="card login-grid" style={{ padding: '34px 32px', width: '100%', maxWidth: '560px', display: 'flex', flexDirection: 'column', gap: '12px', position: 'relative', zIndex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
+          <div style={{ width: 38, height: 38, borderRadius: 999, background: 'var(--ink)', color: 'var(--lime)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.05rem' }}>✳</div>
+          <div>
+            <h2 style={{ margin: 0, fontSize: '1.35rem' }}>Join Sentinel</h2>
+            <div style={{ fontSize: '0.75rem', color: 'var(--muted)' }}>Continuous care, starting today</div>
+          </div>
         </div>
-        {error && <div style={{ background: 'rgba(199,70,59,0.15)', border: '1px solid rgba(199,70,59,0.3)', color: 'var(--danger)', fontSize: '0.8125rem', padding: '8px 12px', borderRadius: '8px' }}>{error}</div>}
 
-        <input placeholder="Username (letters, numbers, _)" value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} style={{ borderColor: submitted && fieldErrors().username ? 'var(--danger)' : undefined }} />
-        <InlineError msg={(submitted || form.username.trim().length > 0) ? fieldErrors().username : undefined} />
-        <div style={{ position: 'relative' }}>
-          <input type={showPw ? 'text' : 'password'} placeholder="Password (min 6, upper, lower, number, special)" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} style={{ paddingRight: '44px' }} />
-          <button type="button" onClick={() => setShowPw(!showPw)} aria-label={showPw ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', opacity: 0.5, lineHeight: 1, display: 'flex' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              {showPw ? (
-                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-              ) : (
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              )}
-              {showPw && <line x1="1" y1="1" x2="23" y2="23" />}
-            </svg>
-          </button>
-        </div>
-        {form.password.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '0.72rem', marginTop: '-4px' }}>
-            {PASSWORD_RULES.map(r => {
-              const ok = r.test(form.password)
-              return (
-                <div key={r.label} style={{ color: ok ? '#2e7d32' : 'var(--danger)' }}>
-                  {ok ? '✓' : '✗'} {r.label}
-                </div>
-              )
-            })}
-            {(() => {
-              const common = COMMON_PASSWORDS.includes(form.password.toLowerCase().trim())
-              const repeated = form.password.length > 0 && /^(.)\1+$/.test(form.password)
-              const bad = common || repeated
-              return (
-                <div style={{ color: bad ? 'var(--danger)' : '#2e7d32' }}>
-                  {!bad ? '✓' : '✗'} Not a common or repeated password
-                </div>
-              )
-            })()}
+        {error && (
+          <div style={{ background: 'var(--danger-soft)', border: '1px solid color-mix(in srgb, var(--danger) 30%, transparent)', color: 'var(--danger-deep)', fontSize: '0.8125rem', padding: '9px 13px', borderRadius: '12px', fontWeight: 600 }}>
+            {error}
           </div>
         )}
-        <div style={{ position: 'relative' }}>
-          <input type={showConfirmPw ? 'text' : 'password'} placeholder="Confirm Password" value={form.confirmPassword} onChange={e => setForm(f => ({ ...f, confirmPassword: e.target.value }))} style={{ paddingRight: '44px', borderColor: submitted && form.confirmPassword.length > 0 && form.password !== form.confirmPassword ? 'var(--danger)' : undefined }} />
-          <button type="button" onClick={() => setShowConfirmPw(!showConfirmPw)} aria-label={showConfirmPw ? 'Hide password' : 'Show password'} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', opacity: 0.5, lineHeight: 1, display: 'flex' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              {showConfirmPw ? (
-                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-              ) : (
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-              )}
-              {showConfirmPw && <line x1="1" y1="1" x2="23" y2="23" />}
-            </svg>
-          </button>
-        </div>
-        {form.confirmPassword.length > 0 && form.password !== form.confirmPassword && (
-          <div style={{ fontSize: '0.72rem', color: 'var(--danger)', marginTop: '4px' }}>⚠ Passwords do not match</div>
-        )}
-        <input placeholder="Full Name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={{ borderColor: submitted && fieldErrors().name ? 'var(--danger)' : undefined }} />
-        <InlineError msg={(submitted || form.name.trim().length > 0) ? fieldErrors().name : undefined} />
 
-        <div style={{ display: 'grid', gap: '8px', gridTemplateColumns: '1fr 1fr' }}>
+        {/* Role selector */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+          {(['patient', 'psychologist'] as const).map(r => (
+            <button
+              key={r} type="button"
+              onClick={() => setForm(f => ({ ...f, role: r, assigned_psych: '' }))}
+              className={form.role === r ? 'btn-lime' : ''}
+              style={{ padding: '12px', fontSize: '0.875rem', justifyContent: 'center', flexDirection: 'column', gap: '2px', borderRadius: '16px' }}
+            >
+              <span style={{ fontWeight: 800 }}>{r === 'patient' ? '🧑 I\'m a client' : '🧑‍⚕️ I\'m a psychologist'}</span>
+              <span style={{ fontSize: '0.62rem', fontWeight: 500, opacity: 0.75 }}>
+                {r === 'patient' ? 'Track & journal with care' : 'Manage a caseload'}
+              </span>
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
           <div>
-            <label>Date of Birth</label>
-            <input type="date" max={todayLocalISO()} min="1900-01-01" value={form.dob} onChange={e => setForm(f => ({ ...f, dob: e.target.value }))} style={{ borderColor: (submitted || form.dob.length > 0) && fieldErrors().dob ? 'var(--danger)' : undefined }} />
-            <InlineError msg={(submitted || form.dob.length > 0) ? fieldErrors().dob : undefined} />
+            <label>Full name</label>
+            <input placeholder="Jamie Rivera" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} style={{ borderColor: submitted && errs.name ? 'var(--danger)' : undefined }} />
+            <InlineError msg={(submitted || form.name.trim().length > 0) ? errs.name : undefined} />
           </div>
           <div>
-            <label>{form.role === 'psychologist' ? 'Specialisation' : 'Occupation'}</label>
-            <input placeholder={form.role === 'psychologist' ? 'e.g. Trauma, Anxiety, Child therapy' : 'e.g. Engineer'} value={form.occupation} onChange={e => setForm(f => ({ ...f, occupation: e.target.value }))} style={{ borderColor: submitted && fieldErrors().occupation ? 'var(--danger)' : undefined }} />
-            <InlineError msg={(submitted || form.occupation.trim().length > 0) ? fieldErrors().occupation : undefined} />
+            <label>Username</label>
+            <input placeholder="jamie.r" value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} style={{ borderColor: submitted && errs.username ? 'var(--danger)' : undefined }} />
+            <InlineError msg={(submitted || form.username.trim().length > 0) ? errs.username : undefined} />
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          <div>
+            <label>Date of birth</label>
+            <input type="date" max={todayLocalISO()} min="1900-01-01" value={form.dob} onChange={e => setForm(f => ({ ...f, dob: e.target.value }))} style={{ borderColor: (submitted || form.dob) && errs.dob ? 'var(--danger)' : undefined }} />
+            <InlineError msg={(submitted || form.dob) ? errs.dob : undefined} />
+          </div>
+          <div>
+            <label>{form.role === 'psychologist' ? 'Specialisation' : 'Occupation / school'}</label>
+            <input placeholder={form.role === 'psychologist' ? 'e.g. Adolescent anxiety' : 'e.g. Student, Lincoln High'} value={form.occupation} onChange={e => setForm(f => ({ ...f, occupation: e.target.value }))} style={{ borderColor: submitted && errs.occupation ? 'var(--danger)' : undefined }} />
+            <InlineError msg={(submitted || form.occupation.trim()) ? errs.occupation : undefined} />
           </div>
         </div>
 
         <div>
-          <label>Country</label>
-          <select value={form.country} onChange={e => setForm(f => ({ ...f, country: e.target.value }))} style={{ width: '100%', borderColor: (submitted || form.country.length > 0) && fieldErrors().country ? 'var(--danger)' : undefined }}>
-            <option value="">Select your country…</option>
-            {COUNTRIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <div style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: '4px' }}>Used for birthday wishes and quick check-in timing. You can adjust the exact timezone anytime in Edit Profile.</div>
-          <InlineError msg={(submitted || form.country.length > 0) ? fieldErrors().country : undefined} />
+          <label>Email <span style={{ color: 'var(--faint)', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>(optional — used for verification &amp; alerts)</span></label>
+          <input type="email" placeholder="you@example.com" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} style={{ borderColor: (submitted || form.email) && errs.email ? 'var(--danger)' : undefined }} />
+          <InlineError msg={(submitted || form.email) ? errs.email : undefined} />
         </div>
 
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button type="button" onClick={() => setForm(f => ({ ...f, role: 'patient' }))} style={{ flex: 1, padding: '10px', fontSize: '0.8125rem', background: form.role === 'patient' ? 'var(--accent-soft)' : 'var(--surface)', border: `1px solid ${form.role === 'patient' ? 'var(--accent)' : 'var(--border)'}`, borderRadius: '8px', color: form.role === 'patient' ? 'var(--heading)' : 'var(--secondary)', cursor: 'pointer' }}>
-            🧑 Patient
-          </button>
-          <button type="button" onClick={() => setForm(f => ({ ...f, role: 'psychologist' }))} style={{ flex: 1, padding: '10px', fontSize: '0.8125rem', background: form.role === 'psychologist' ? 'var(--accent-soft)' : 'var(--surface)', border: `1px solid ${form.role === 'psychologist' ? 'var(--warn)' : 'var(--border)'}`, borderRadius: '8px', color: form.role === 'psychologist' ? 'var(--heading)' : 'var(--secondary)', cursor: 'pointer' }}>
-            🧑‍⚕️ Psychologist
-          </button>
+        <div>
+          <label>Country</label>
+          <CustomSelect
+            value={form.country}
+            onChange={v => setForm(f => ({ ...f, country: v }))}
+            searchable
+            placeholder="Select your country…"
+            invalid={!!((submitted || form.country) && errs.country)}
+            options={[{ value: '', label: 'Select your country…' }, ...COUNTRIES.map(c => ({ value: c, label: c }))]}
+          />
+          <InlineError msg={(submitted || form.country) ? errs.country : undefined} />
+        </div>
+
+        <div>
+          <label>Password</label>
+          <div style={{ position: 'relative' }}>
+            <input type={showPw ? 'text' : 'password'} placeholder="Create a strong password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} style={{ paddingRight: '64px' }} />
+            <button type="button" onClick={() => setShowPw(!showPw)} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none !important', border: 'none !important', color: 'var(--muted)', cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700, padding: '6px' }}>
+              {showPw ? 'HIDE' : 'SHOW'}
+            </button>
+          </div>
+          {form.password.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '6px' }}>
+              {PASSWORD_RULES.map(r => {
+                const ok = r.test(form.password)
+                return (
+                  <span key={r.label} style={{
+                    fontSize: '0.62rem', fontWeight: 600, padding: '3px 8px', borderRadius: 999,
+                    background: ok ? 'var(--ok-soft)' : 'var(--surface-soft-2)',
+                    color: ok ? 'var(--ok)' : 'var(--faint)',
+                    border: `1px solid ${ok ? 'color-mix(in srgb, var(--ok) 30%, transparent)' : 'var(--border)'}`,
+                  }}>
+                    {ok ? '✓' : '○'} {r.label}
+                  </span>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <label>Confirm password</label>
+          <input type={showPw ? 'text' : 'password'} placeholder="Repeat it" value={form.confirmPassword} onChange={e => setForm(f => ({ ...f, confirmPassword: e.target.value }))} style={{ borderColor: submitted && form.confirmPassword && form.password !== form.confirmPassword ? 'var(--danger)' : undefined }} />
+          {form.confirmPassword && form.password !== form.confirmPassword && (
+            <InlineError msg="Passwords do not match" />
+          )}
         </div>
 
         {form.role === 'psychologist' && (
-          <div className="psych-box" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <div className="psych-box-title">🧬 Psychologist Verification</div>
-            <div className="psych-box-desc">Type the professional code we gave you — your clinic is filled in automatically</div>
+          <div className="card-sm" style={{ background: 'var(--accent-soft)', borderColor: 'color-mix(in srgb, var(--accent) 30%, transparent)' }}>
+            <label style={{ color: 'var(--accent)' }}>🎟 Invite code</label>
+            <input
+              placeholder="e.g. INV-XXXXXXXX"
+              value={form.invite_code}
+              onChange={e => setForm(f => ({ ...f, invite_code: e.target.value.trim().toUpperCase() }))}
+            />
+            <div style={{ fontSize: '0.7rem', color: 'var(--muted)', marginTop: '4px' }}>
+              Ask your clinic administrator for an invite code — each code is tied to one clinic.
+            </div>
+            <InlineError msg={submitted && errs.invite_code ? errs.invite_code : undefined} />
+
+            <label style={{ color: 'var(--accent)', marginTop: '10px' }}>🪪 Medical license number</label>
+            <input
+              placeholder="Your official registration / license no."
+              value={form.license_number}
+              onChange={e => setForm(f => ({ ...f, license_number: e.target.value.trim() }))}
+            />
+            <InlineError msg={(submitted || form.license_number) ? errs.license_number : undefined} />
+
+            <div style={{ fontSize: '0.68rem', color: 'var(--muted)', marginTop: '10px', fontWeight: 600 }}>Legacy professional code (demo only)</div>
+            <input
+              placeholder="e.g. PSY-0001 (optional)"
+              value={form.professional_code}
+              onChange={e => setForm(f => ({ ...f, professional_code: e.target.value.trim().toUpperCase() }))}
+            />
+            {PROFESSIONAL_CODE_CLINICS[form.professional_code] && (
+              <div style={{ fontSize: '0.75rem', color: 'var(--ok)', fontWeight: 700, marginTop: '6px' }}>✓ Clinic: {PROFESSIONAL_CODE_CLINICS[form.professional_code]}</div>
+            )}
+          </div>
+        )}
+
+        {form.role === 'patient' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
             <div>
-              <label>Professional Code</label>
-              <input
-                placeholder="e.g. PSY-0001"
-                value={form.professional_code}
-                onChange={e => setForm(f => ({ ...f, professional_code: e.target.value.trim().toUpperCase() }))}
+              <label>Clinic</label>
+              <CustomSelect
+                value={form.clinic_code}
+                onChange={v => setForm(f => ({ ...f, clinic_code: v, assigned_psych: '' }))}
+                placeholder="Select clinic…"
+                invalid={submitted && !!errs.clinic}
+                options={[{ value: '', label: 'Select clinic…' }, ...CLINIC_CODES.map(code => ({ value: code, label: code }))]}
               />
+              <InlineError msg={submitted ? errs.clinic : undefined} />
             </div>
-            {PROFESSIONAL_CODE_CLINICS[form.professional_code] ? (
-              <div style={{ fontSize: '0.8rem', color: '#2e7d32', fontWeight: 600 }}>✓ Clinic: {PROFESSIONAL_CODE_CLINICS[form.professional_code]}</div>
-            ) : (
-              form.professional_code.length > 0 && (
-                <div style={{ fontSize: '0.72rem', color: 'var(--danger)' }}>⚠ Invalid code — check the code you were issued.</div>
-              )
-            )}
-            <InlineError msg={submitted && fieldErrors().professional_code ? fieldErrors().professional_code : undefined} />
-            <div style={{ fontSize: '0.7rem', color: 'var(--muted)' }}>Your professional code is unique to you and can only be registered once.</div>
-          </div>
-        )}
-
-        {form.role === 'patient' && (
-          <div className="card" style={{ padding: '16px' }}>
-            <div className="psych-box-title">🏥 Select Your Clinic</div>
-            <div className="psych-box-desc" style={{ marginBottom: '8px' }}>Choose the clinic where you'll receive care</div>
-            <select value={form.clinic_code} onChange={e => setForm(f => ({ ...f, clinic_code: e.target.value, assigned_psych: '' }))} style={{ width: '100%', padding: '10px 12px', fontSize: '0.875rem', borderColor: submitted && fieldErrors().clinic ? 'var(--danger)' : undefined }}>
-              <option value="">Select clinic...</option>
-              {CLINIC_CODES.map(code => (
-                <option key={code} value={code}>{code}</option>
-              ))}
-            </select>
-            <InlineError msg={submitted ? fieldErrors().clinic : undefined} />
-          </div>
-        )}
-
-        {form.role === 'patient' && (
-          <div className="card" style={{ padding: '16px' }}>
-            <div className="psych-box-title">👥 Select Your Psychologist</div>
-            <div className="psych-box-desc" style={{ marginBottom: '8px' }}>
-              {!form.clinic_code
-                ? 'Choose your clinic first, then pick a psychologist'
-                : `Psychologists at ${form.clinic_code}:`}
+            <div>
+              <label>Psychologist</label>
+              <CustomSelect
+                value={form.assigned_psych}
+                onChange={v => setForm(f => ({ ...f, assigned_psych: v }))}
+                disabled={!form.clinic_code || psychsForClinic.length === 0}
+                placeholder={!form.clinic_code ? 'Pick clinic first…' : psychsForClinic.length === 0 ? 'None available yet' : 'Choose…'}
+                invalid={submitted && !!errs.psych}
+                options={psychsForClinic.map((p: any) => ({ value: p.username || p, label: `${p.name || p}${p.specialisation ? ` — ${p.specialisation}` : ''}` }))}
+              />
+              <InlineError msg={submitted ? errs.psych : undefined} />
             </div>
-            <select value={form.assigned_psych} onChange={e => setForm(f => ({ ...f, assigned_psych: e.target.value }))} disabled={!form.clinic_code || psychsForClinic.length === 0} style={{ width: '100%', padding: '10px 12px', fontSize: '0.875rem', borderColor: submitted && fieldErrors().psych ? 'var(--danger)' : undefined }}>
-              <option value="">{!form.clinic_code ? 'Select clinic first...' : psychsForClinic.length === 0 ? 'No psychologists available yet at this clinic' : 'Select a psychologist...'}</option>
-              {psychsForClinic.map((p: any) => (
-                <option key={p.username || p} value={p.username || p}>{p.name || p}{p.professional_code ? ` (${p.professional_code})` : ''}{p.specialisation ? ` — ${p.specialisation}` : ''}</option>
-              ))}
-            </select>
-            <InlineError msg={submitted ? fieldErrors().psych : undefined} />
-            {form.clinic_code && psychsForClinic.length === 0 && (
-              <div style={{ fontSize: '0.72rem', color: 'var(--muted)', marginTop: '8px' }}>
-                No psychologists registered at this clinic yet. Ask your clinic to add their team first.
-              </div>
-            )}
           </div>
         )}
 
-        <button type="submit" disabled={loading} className="btn-primary" style={{ justifyContent: 'center', padding: '10px' }}>
-          {loading ? 'Registering...' : 'Register'}
+        <button type="submit" disabled={loading} className="btn-primary" style={{ width: '100%', padding: '12px', fontSize: '0.9rem', marginTop: '4px' }}>
+          {loading ? 'Creating account…' : 'Create account'}
         </button>
 
-        <div style={{ fontSize: '0.75rem', color: 'var(--muted)', textAlign: 'center' }}>
-          Already have an account? <Link to="/login">Sign in</Link>
+        <div style={{ fontSize: '0.8rem', color: 'var(--muted)', textAlign: 'center' }}>
+          Already have an account? <Link to="/login" style={{ fontWeight: 700 }}>Sign in</Link>
         </div>
       </form>
     </div>

@@ -15,8 +15,9 @@ def owns_or_psych(username: str, user: User) -> bool:
 
 
 def ensure_owns_or_psych(username: str, user: User) -> None:
-    if user.role != "psychologist" and user.username != username:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    if user.role in ("psychologist", "admin") or user.username == username:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
 
 def get_owner_or_psych(username: str, user: User = Depends(get_current_user)) -> User:

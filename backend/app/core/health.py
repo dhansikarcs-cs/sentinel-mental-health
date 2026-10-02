@@ -93,6 +93,31 @@ def health_ai() -> dict:
     groq_configured = bool(groq_key) and groq_key not in ("", "gsk_your_key_here", "change-me")
     groq_available = groq_configured
 
+    # Check Azure AI Foundry / Azure OpenAI
+    azure_key = os.environ.get("AZURE_AI_KEY", "")
+    azure_endpoint = os.environ.get("AZURE_AI_ENDPOINT", "")
+    azure_configured = bool(azure_key) and bool(azure_endpoint)
+    azure_available = azure_configured  # keyed endpoint; deep ping happens on first real call
+
+    # Check Azure AI Foundry hosted agent (Responses API + agent_reference).
+    # Falls back to pydantic settings so .env-loaded config is visible too
+    # (on Azure the values are real env vars; locally they may come from .env).
+    try:
+        from app.core.config import settings as _settings
+    except Exception:
+        _settings = None
+    agent_endpoint = os.environ.get("AZURE_AGENT_ENDPOINT", "") or (
+        getattr(_settings, "azure_agent_endpoint", "") if _settings else ""
+    )
+    agent_name = os.environ.get("AZURE_AGENT_NAME", "") or (
+        getattr(_settings, "azure_agent_name", "") if _settings else ""
+    )
+    agent_mode = os.environ.get("AZURE_AGENT_MODE", "") or (
+        getattr(_settings, "azure_agent_mode", "auto") if _settings else "auto"
+    )
+    agent_configured = bool(agent_endpoint) and bool(agent_name) and agent_mode.lower() != "off"
+    agent_available = agent_configured  # deep ping happens on first real call
+
     # Check emotion classifier
     classifier_available = False
     try:
@@ -102,11 +127,23 @@ def health_ai() -> dict:
     except Exception:
         pass
 
-    any_available = ollama_available or groq_available or classifier_available
+    any_available = ollama_available or groq_available or azure_available or agent_available or classifier_available
 
     return {
         "ollama": {"available": ollama_available, "url": ollama_url},
         "groq": {"available": groq_available, "configured": groq_configured},
+        "azure_agent": {
+            "available": agent_available,
+            "configured": bool(agent_endpoint) and bool(agent_name),
+            "name": agent_name,
+            "mode": agent_mode,
+        },
+        "azure": {
+            "available": azure_available,
+            "configured": azure_configured,
+            "deployment": os.environ.get("AZURE_DEPLOYMENT", ""),
+            "endpoint_host": (azure_endpoint.replace("https://", "").split("/")[0] if azure_endpoint else ""),
+        },
         "emotion_classifier": {"available": classifier_available, "model_version": "1.0.0"},
         "any_available": any_available,
     }

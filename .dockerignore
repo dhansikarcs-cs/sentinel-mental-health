@@ -1,0 +1,44 @@
+# Root build context for docker build -f Dockerfile.azure .
+# Keeps the context small (venv, node_modules, .git are huge) and keeps
+# secrets like .env OUT of the image.
+.git
+.github
+.devcontainer
+.vscode
+.idea
+.DS_Store
+
+# Environments & secrets — NEVER bake these into an image
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+
+# Python
+**/venv/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Node
+**/node_modules/
+frontend/dist/
+
+# Data — never ship databases or uploaded files in an image
+**/data/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+**/*.db.bak*
+
+# Docs & tooling not needed inside the container
+docs/
+README.md
+SENTINEL_CODEBOOK.md
+LICENSE
+render.yaml
+dev.sh

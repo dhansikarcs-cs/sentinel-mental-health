@@ -3,13 +3,14 @@ import hmac as hmac_mod
 import logging
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.api_response import ok
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
+from app.core.structured_errors import ErrorCode, err
 from app.models.crisis import CrisisLog, CrisisState
 from app.models.user import User
 from app.repositories import PatientRepository
@@ -49,6 +50,36 @@ def _psych_email(db: Session, patient_username: str) -> str:
     return repo.contact_email(patient.assigned_psych)
 
 
+def _notify_assigned_psych(
+    db: Session, patient_username: str, title: str, message: str, notification_type: str = "crisis"
+) -> None:
+    """Drop an in-app notification for the patient's assigned psychologist.
+
+    Emails can be unconfigured or land in spam — the in-app inbox is the
+    channel the clinician always sees. Best-effort: a missing assignment or
+    notification failure must never break the crisis flow itself.
+    """
+    if not patient_username:
+        return
+    try:
+        from app.services.notify import create_notification
+
+        patient = PatientRepository(db).get_by_username_raw(patient_username)
+        psych = patient.assigned_psych if patient else ""
+        if not psych:
+            return
+        create_notification(
+            db,
+            patient_username=patient_username,
+            title=title,
+            message=message,
+            notification_type=notification_type,
+            recipient_username=psych,
+        )
+    except Exception:
+        logger.exception("Failed to notify psychologist of %s about crisis event", patient_username)
+
+
 def _verify_trustee_link(patient: str, exp: int, sig: str) -> bool:
     if not patient or not exp or not sig:
         return False
@@ -65,7 +96,7 @@ def _require_valid_trustee_link(
     sig: str = Query(""),
 ) -> str:
     if not _verify_trustee_link(patient, exp, sig):
-        raise HTTPException(status_code=403, detail="Invalid or expired trustee link")
+        raise err(403, ErrorCode.FORBIDDEN, "Invalid or expired trustee link")
     return patient
 
 
@@ -141,6 +172,12 @@ def trigger_crisis(user: User = Depends(get_current_user), db: Session = Depends
     log = CrisisLog(event="triggered", patient=user.username, timestamp=now, source=user.role)
     db.add(log)
     db.commit()
+    _notify_assigned_psych(
+        db,
+        user.username,
+        title="🚨 Crisis alert — immediate attention required",
+        message=f"{user.username} triggered a crisis alert at {now[:16].replace('T', ' ')} UTC. Open the emergency center to acknowledge it.",
+    )
     log_audit("crisis_triggered", user=user.username, role=user.role, severity="HIGH", status="success", db=db)
     return ok(message="Crisis triggered")
 
@@ -176,12 +213,25 @@ def acknowledge_crisis(
 @router.post("/resolve")
 def resolve_crisis(
     patient: str = Query(""),
-    user: User = Depends(require_role("psychologist")),
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    state = _active_state_for(db, patient)
+    """Cancel/resolve a crisis.
+
+    A patient may always cancel their own crisis (the "I'm safe" button); a
+    psychologist or admin may resolve any crisis. The ownership clamp stops a
+    patient resolving someone else's crisis by guessing their username.
+    """
+    if user.role in ("psychologist", "admin"):
+        state = _active_state_for(db, patient)
+    else:
+        # Patients always act on their own state row — never the generic "first
+        # active row", which could belong to another patient.
+        state = _get_or_create_state(db, user.username)
     if not state.active:
         return ok(message="No active crisis")
+    if user.role not in ("psychologist", "admin") and state.patient_username != user.username:
+        raise err(403, ErrorCode.OWNER_ONLY, "You can only cancel your own crisis")
     now = datetime.now(UTC).isoformat()
     patient = state.patient_username
     log = CrisisLog(
@@ -202,6 +252,13 @@ def resolve_crisis(
     state.helpline_ack_emailed = 0
     db.add(log)
     db.commit()
+    _notify_assigned_psych(
+        db,
+        patient,
+        title="✅ Crisis resolved",
+        message=f"The crisis for {patient} was resolved by {user.username} at {now[:16].replace('T', ' ')} UTC.",
+        notification_type="info",
+    )
     log_audit(
         "crisis_resolved",
         user=user.username,
@@ -507,7 +564,83 @@ def assess_risk(req: RiskAssessmentRequest, user: User = Depends(get_current_use
 @router.get("/log", response_model=list[CrisisLogResponse])
 def get_crisis_log(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     query = db.query(CrisisLog)
-    if user.role != "psychologist":
+    if user.role not in ("psychologist", "admin"):
         query = query.filter(CrisisLog.patient == user.username)
     logs = query.order_by(CrisisLog.timestamp.desc()).limit(50).all()
     return logs
+
+
+@router.get("/history/{patient_username}")
+def get_crisis_history(
+    patient_username: str,
+    user: User = Depends(require_role("psychologist", "admin")),
+    db: Session = Depends(get_db),
+):
+    """Per-patient crisis history for clinicians.
+
+    Reconstructs crisis *episodes* from the event log: a "triggered" event
+    opens an episode, the next "resolved" closes it. Returns the episodes
+    with their durations plus outcome stats a clinician can scan in seconds
+    (how many crises, how long they lasted, who ended them).
+    """
+    patient = db.query(User).filter(User.username == patient_username).first()
+    if not patient:
+        raise err(404, ErrorCode.PATIENT_NOT_FOUND, "Patient not found")
+    if user.role == "psychologist" and patient.assigned_psych != user.username:
+        raise err(403, ErrorCode.NOT_ASSIGNED, "This client is not assigned to you")
+
+    logs = (
+        db.query(CrisisLog)
+        .filter(CrisisLog.patient == patient_username, CrisisLog.event.in_(["triggered", "resolved"]))
+        .order_by(CrisisLog.id.asc())  # append-only log: insertion order is the true event order
+        .all()
+    )
+
+    def _parse(ts: str) -> datetime | None:
+        try:
+            return datetime.fromisoformat(ts)
+        except (ValueError, TypeError):
+            return None
+
+    episodes: list[dict] = []
+    open_triggered: tuple[str, str] | None = None  # (timestamp, source)
+    for log in logs:
+        if log.event == "triggered":
+            if open_triggered is None:
+                open_triggered = (log.timestamp, log.source or "")
+        elif log.event == "resolved" and open_triggered is not None:
+            started = _parse(open_triggered[0])
+            ended = _parse(log.timestamp)
+            duration = int((ended - started).total_seconds()) if started and ended else None
+            episodes.append(
+                {
+                    "triggered_at": open_triggered[0],
+                    "resolved_at": log.timestamp,
+                    "duration_seconds": duration,
+                    "resolved_by": log.source or "",
+                    "triggered_by": open_triggered[1],
+                }
+            )
+            open_triggered = None
+    if open_triggered is not None:
+        episodes.append(
+            {
+                "triggered_at": open_triggered[0],
+                "resolved_at": "",
+                "duration_seconds": None,
+                "resolved_by": "",
+                "triggered_by": open_triggered[1],
+                "active": True,
+            }
+        )
+
+    durations = [e["duration_seconds"] for e in episodes if e["duration_seconds"] is not None]
+    stats = {
+        "total_episodes": len(episodes),
+        "active": 1 if episodes and episodes[-1].get("active") else 0,
+        "avg_duration_seconds": int(sum(durations) / len(durations)) if durations else 0,
+        "longest_duration_seconds": max(durations) if durations else 0,
+        "resolved_by_patient": sum(1 for e in episodes if e["resolved_by"] == patient_username),
+    }
+
+    return ok(data={"patient": patient_username, "episodes": list(reversed(episodes))[:50], "stats": stats})

@@ -107,9 +107,9 @@ def test_unique_index_blocks_duplicate_seq_at_db_level(client, make_user, db_ses
 
 def test_login_rate_limit_returns_retry_after(client, make_user):
     make_user()
-    for _ in range(5):
+    # Demo mode: no lockout — repeated failures on an unknown user stay 401,
+    # never escalate to 429.
+    for _ in range(10):
         resp = client.post("/api/auth/login", json={"username": "nobody", "password": "wrong"})
-        assert resp.status_code == 401 or resp.status_code == 429
-    locked = client.post("/api/auth/login", json={"username": "nobody", "password": "wrong"})
-    assert locked.status_code == 429
-    assert int(locked.headers["Retry-After"]) > 0
+        assert resp.status_code == 401
+        assert "Retry-After" not in resp.headers

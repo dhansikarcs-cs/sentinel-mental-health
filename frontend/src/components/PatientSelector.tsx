@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
+import CustomSelect from './CustomSelect'
 
 // Shared hook: loads the psychologist's patient list once. Pages that render
 // a patient <select> used to each copy this load + normalize logic (×5).
@@ -33,15 +34,21 @@ interface PatientSelectorProps {
   style?: React.CSSProperties
 }
 
-// Shared patient <select> (was duplicated across PatientInsights, Timeline,
-// ClinicalNotes, Followups, and others).
+// Shared patient selector (was duplicated across PatientInsights, Timeline,
+// ClinicalNotes, Followups, and others). Uses CustomSelect for consistent
+// theming (native <select> can't be styled in dark mode).
 export default function PatientSelector({ patients, value, onChange, placeholder = '-- Select patient --', style }: PatientSelectorProps) {
   return (
-    <select value={value} onChange={e => onChange(e.target.value)} style={style}>
-      <option value="">{placeholder}</option>
-      {patients.map((p: any) => (
-        <option key={patientKey(p)} value={patientKey(p)}>{patientLabel(p)}</option>
-      ))}
-    </select>
+    <CustomSelect
+      value={value}
+      onChange={onChange}
+      style={style}
+      placeholder={placeholder}
+      searchable
+      options={[
+        { value: '', label: placeholder },
+        ...patients.map((p: any) => ({ value: patientKey(p), label: patientLabel(p) })),
+      ]}
+    />
   )
 }

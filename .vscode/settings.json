@@ -1,0 +1,8 @@
+{
+    "appService.zipIgnorePattern": [
+        "node_modules{,/**}",
+        ".vscode{,/**}"
+    ],
+    "appService.defaultWebAppToDeploy": "/subscriptions/03e4832a-0fe9-4d09-ad0f-153da4eddfba/resourceGroups/sentinel20_group/providers/Microsoft.Web/sites/sentinel20",
+    "appService.deploySubpath": "azure-deploy"
+}

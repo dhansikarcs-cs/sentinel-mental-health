@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { getUser } from '../stores/auth'
+import { formatDate } from '../constants'
 
 export default function ExportPage() {
   const user = getUser()
@@ -20,10 +21,13 @@ export default function ExportPage() {
     if (isPsych) {
       api.getPsychPatients().then(setPatients).catch(() => {})
     }
+  }, [isPsych])
+
+  useEffect(() => {
     if (mode === 'myself') {
       api.getPsychJournals().then(setOwnJournals).catch(() => setOwnJournals([]))
     }
-  }, [mode, isPsych])
+  }, [mode])
 
   useEffect(() => {
     if (!selectedPatient) { setEntries([]); setNotes([]); return }
@@ -60,176 +64,173 @@ export default function ExportPage() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <h1>📦 Export Center</h1>
+    <div className="space-y-4 animate-fade-in">
+      <div className="segmented-control" data-tour="export">
+        <button className={`segmented-btn${mode === 'patients' ? ' active' : ''}`} onClick={() => setMode('patients')}>👥 Clients</button>
+        <button className={`segmented-btn${mode === 'myself' ? ' active' : ''}`} onClick={() => setMode('myself')}>🧑 Me</button>
+      </div>
 
-      <div className="card" style={{ padding: '16px' }} data-tour="export">
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
-          {['patients', 'myself'].map(m => (
-            <button key={m} onClick={() => setMode(m as any)}
-              style={{
-                flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${mode === m ? 'var(--accent)' : 'var(--border)'}`,
-                background: mode === m ? 'var(--accent-soft)' : 'var(--surface)', color: mode === m ? 'var(--accent)' : 'var(--text)',
-                fontSize: '0.875rem', fontWeight: mode === m ? 600 : 400, cursor: 'pointer',
-              }}>
-              {m === 'patients' ? '👥 Patients' : '🧑 Me'}
-            </button>
-          ))}
-        </div>
+      <div className="card-sm" style={{ display: 'flex', gap: '12px', alignItems: 'center', padding: '14px 18px', flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--muted)', fontSize: '0.8rem', fontWeight: 700 }}>📅 Filter:</span>
+        <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} style={{ width: '160px' }} />
+        <span style={{ color: 'var(--faint)', fontSize: '0.75rem' }}>to</span>
+        <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} style={{ width: '160px' }} />
+        {(dateFrom || dateTo) && (
+          <button className="btn-ghost" onClick={() => { setDateFrom(''); setDateTo('') }} style={{ fontSize: '0.75rem' }}>Clear</button>
+        )}
+        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--faint)', fontWeight: 600 }}>
+          {mode === 'patients' ? `${filteredEntries.length} entries · ${filteredNotes.length} notes` : `${filteredOwn.length} entries`}
+        </span>
+      </div>
 
-        <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', alignItems: 'center' }}>
-          <span style={{ color: 'var(--muted)', fontSize: '0.8125rem' }}>📅 Filter by date:</span>
-          <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-            style={{ padding: '6px 10px', fontSize: '0.8rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--soft)' }} />
-          <span style={{ color: 'var(--faint)', fontSize: '0.75rem' }}>to</span>
-          <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-            style={{ padding: '6px 10px', fontSize: '0.8rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--soft)' }} />
-          {(dateFrom || dateTo) && (
-            <button onClick={() => { setDateFrom(''); setDateTo('') }}
-              style={{ padding: '6px 12px', fontSize: '0.75rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--muted)', cursor: 'pointer' }}>
-              Clear
-            </button>
-          )}
-        </div>
-
-        {mode === 'patients' ? (
-          <>
-            {patients.length === 0 ? (
-              <div style={{ color: 'var(--muted)', fontSize: '0.8125rem' }}>No patients assigned.</div>
-            ) : (
-              <>
-                <div style={{ fontSize: '0.8125rem', color: 'var(--secondary)', fontWeight: 600, marginBottom: '8px' }}>Select a patient</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '16px' }}>
-                  {patients.map((p: any) => (
-                    <button key={p.username || p} onClick={() => setSelectedPatient(p.username || p)}
-                      style={{
-                        padding: '8px 16px', borderRadius: '8px', border: `1px solid ${selectedPatient === (p.username || p) ? 'var(--accent)' : 'var(--border)'}`,
-                        background: selectedPatient === (p.username || p) ? 'var(--accent-soft)' : 'var(--surface)',
-                        color: selectedPatient === (p.username || p) ? 'var(--accent)' : 'var(--text)', fontSize: '0.8125rem', cursor: 'pointer',
-                      }}>
-                      {p.name || p.username || p}
+      {mode === 'patients' ? (
+        <>
+          {patients.length === 0 ? (
+            <div className="card" style={{ textAlign: 'center', color: 'var(--muted)' }}>No clients assigned.</div>
+          ) : (
+            <>
+              <div className="chip-row" style={{ marginBottom: '16px' }}>
+                {patients.map((p: any) => {
+                  const key = p.username || p
+                  const sel = selectedPatient === key
+                  return (
+                    <button key={key} className={`chip${sel ? ' active' : ''}`} onClick={() => setSelectedPatient(key)}>
+                      {p.name || key}
                     </button>
-                  ))}
-                </div>
+                  )
+                })}
+              </div>
 
-                {selectedPatient && (
-                  <>
-                    <h3 style={{ fontSize: '0.9rem', margin: '0 0 8px 0', color: 'var(--accent)' }}>
-                      {patients.find((p: any) => (p.username || p) === selectedPatient)?.name || selectedPatient}
-                    </h3>
+              {selectedPatient && (
+                <>
+                  <h3 style={{ marginBottom: '4px' }}>
+                    {patients.find((p: any) => (p.username || p) === selectedPatient)?.name || selectedPatient}
+                  </h3>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--faint)', marginBottom: '12px' }}>Data shown reflects your access scope · journal raw text stays encrypted</div>
 
-                    <div style={{ fontSize: '0.8125rem', color: 'var(--secondary)', fontWeight: 600, marginBottom: '8px' }}>Journal Entries {dateFrom || dateTo ? `(${filteredEntries.length} shown)` : ''}</div>
-                    {filteredEntries.length === 0 ? (
-                      <div style={{ color: 'var(--muted)', fontSize: '0.8125rem', marginBottom: '16px' }}>No journal entries.</div>
-                    ) : (
-                      entries.map((e: any, i: number) => {
-                        const key = `j_${selectedPatient}_${i}`
-                        const open = expandedEntries[key]
-                        const ts = e.timestamp ? new Date(e.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+                  <div style={{ fontWeight: 800, fontSize: '0.8rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '8px' }}>
+                    Journal entries {dateFrom || dateTo ? `(${filteredEntries.length} shown)` : ''}
+                  </div>
+                  {filteredEntries.length === 0 ? (
+                    <div className="card-sm" style={{ color: 'var(--muted)' }}>No journal entries in this range.</div>
+                  ) : (
+                    filteredEntries.map((e: any, i: number) => {
+                      const key = `j_${selectedPatient}_${e.id ?? i}`
+                      const open = expandedEntries[key]
+                      const ts = e.timestamp ? new Date(e.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+                      return (
+                        <div key={key} style={{ marginBottom: '6px' }}>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <button onClick={() => toggleExpand(setExpandedEntries, key)}
+                              style={{
+                                flex: 1, padding: '9px 13px', background: open ? 'var(--accent-soft)' : 'var(--surface)',
+                                border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`, borderRadius: '12px',
+                                color: 'var(--text)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+                                display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'space-between',
+                              }}>
+                              <span>📄 {ts}</span>
+                              <span style={{ color: 'var(--muted)', fontSize: '0.65rem' }}>{open ? '▲' : '▼'}</span>
+                            </button>
+                            <button onClick={() => downloadCsv(`${selectedPatient}_journal_${i}.csv`, [['Timestamp', 'Summary', 'Emotions'], [ts, e.summary || '', e.emotions || '']])}
+                              className="icon-btn" title="Download CSV" style={{ width: '38px !important', height: '38px !important', minWidth: '38px', minHeight: '38px' }}>
+                              ⬇
+                            </button>
+                          </div>
+                          {open && (
+                            <div style={{ background: 'var(--surface-soft)', border: '1px solid var(--border)', borderRadius: '14px', padding: '13px 15px', margin: '4px 0 0' }}>
+                              <div style={{ color: 'var(--text)', fontSize: '0.82rem', lineHeight: 1.6 }}>{e.clinical_summary || e.summary}</div>
+                              {e.patient_summary && (
+                                <details style={{ marginTop: '8px' }}>
+                                  <summary style={{ fontSize: '0.7rem', color: 'var(--accent)', cursor: 'pointer', fontWeight: 700 }}>Patient-facing summary</summary>
+                                  <div style={{ color: 'var(--secondary)', fontSize: '0.75rem', lineHeight: 1.6, marginTop: '6px' }}>{e.patient_summary}</div>
+                                </details>
+                              )}
+                              {e.emotions && <div style={{ color: 'var(--muted)', fontSize: '0.68rem', marginTop: '6px' }}>Emotions: {e.emotions}</div>}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })
+                  )}
+
+                  {filteredNotes.length > 0 && (
+                    <>
+                      <div style={{ fontWeight: 800, fontSize: '0.8rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', margin: '16px 0 8px' }}>
+                        Clinical notes {dateFrom || dateTo ? `(${filteredNotes.length} shown)` : ''}
+                      </div>
+                      {filteredNotes.map((n: any, i: number) => {
+                        const key = `c_${selectedPatient}_${n.id ?? i}`
+                        const open = expandedNotes[key]
+                        const ts = n.timestamp ? new Date(n.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
                         return (
                           <div key={key} style={{ marginBottom: '6px' }}>
                             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                              <button onClick={() => toggleExpand(setExpandedEntries, key)}
+                              <button onClick={() => toggleExpand(setExpandedNotes, key)}
                                 style={{
-                                  flex: 1, padding: '6px 10px', background: 'var(--surface)',
-                                  border: '1px solid var(--border)', borderRadius: '6px',
-                                  color: 'var(--text)', fontSize: '0.8125rem', cursor: 'pointer', textAlign: 'left',
+                                  flex: 1, padding: '9px 13px', background: open ? 'var(--accent-soft)' : 'var(--surface)',
+                                  border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`, borderRadius: '12px',
+                                  color: 'var(--text)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+                                  display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'space-between',
                                 }}>
-                                📄 {ts} {open ? '▲' : '▼'}
+                                <span>📋 {ts}</span>
+                                <span style={{ color: 'var(--muted)', fontSize: '0.65rem' }}>{open ? '▲' : '▼'}</span>
                               </button>
-                              <button onClick={() => downloadCsv(`${selectedPatient}_journal_${i}.csv`, [['Timestamp', 'Summary'], [ts, e.summary || '']])}
-                                style={{ padding: '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--secondary)', cursor: 'pointer', fontSize: '0.75rem' }}>
+                              <button onClick={() => downloadCsv(`${selectedPatient}_clinical_${i}.csv`, [['Timestamp', 'Note'], [ts, n.ai_synthesis || n.raw_notes || '']])}
+                                className="icon-btn" title="Download CSV" style={{ width: '38px !important', height: '38px !important', minWidth: '38px', minHeight: '38px' }}>
                                 ⬇
                               </button>
                             </div>
                             {open && (
-                              <div style={{ background: 'var(--surface-soft)', border: '1px solid var(--border)', borderRadius: '8px', padding: '12px', margin: '4px 0 0 0' }}>
-                                <div style={{ color: 'var(--text)', fontSize: '0.8125rem', lineHeight: 1.6 }}>{e.summary}</div>
-                                {e.emotions && <div style={{ color: 'var(--muted)', fontSize: '0.6875rem', marginTop: '4px' }}>Emotions: {e.emotions}</div>}
+                              <div style={{ background: 'var(--surface-soft)', border: '1px solid var(--border)', borderRadius: '14px', padding: '13px 15px', margin: '4px 0 0' }}>
+                                <div style={{ color: 'var(--text)', fontSize: '0.82rem', lineHeight: 1.6 }}>{n.ai_synthesis || n.raw_notes}</div>
                               </div>
                             )}
                           </div>
                         )
-                      })
-                    )}
-
-                    {filteredNotes.length > 0 && (
-                      <>
-                        <div style={{ fontSize: '0.8125rem', color: 'var(--secondary)', fontWeight: 600, margin: '12px 0 8px 0' }}>Clinical Notes {dateFrom || dateTo ? `(${filteredNotes.length} shown)` : ''}</div>
-                        {filteredNotes.map((n: any, i: number) => {
-                          const key = `c_${selectedPatient}_${i}`
-                          const open = expandedNotes[key]
-                          const ts = n.timestamp ? new Date(n.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
-                          return (
-                            <div key={key} style={{ marginBottom: '6px' }}>
-                              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                <button onClick={() => toggleExpand(setExpandedNotes, key)}
-                                  style={{
-                                    flex: 1, padding: '6px 10px', background: 'var(--surface)',
-                                    border: '1px solid var(--border)', borderRadius: '6px',
-                                    color: 'var(--text)', fontSize: '0.8125rem', cursor: 'pointer', textAlign: 'left',
-                                  }}>
-                                  📋 {ts} {open ? '▲' : '▼'}
-                                </button>
-                                <button onClick={() => downloadCsv(`${selectedPatient}_clinical_${i}.csv`, [['Timestamp', 'Note'], [ts, n.ai_synthesis || n.raw_notes || '']])}
-                                  style={{ padding: '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--secondary)', cursor: 'pointer', fontSize: '0.75rem' }}>
-                                  ⬇
-                                </button>
-                              </div>
-                              {open && (
-                                <div style={{ background: 'var(--surface-soft)', border: '1px solid var(--border)', borderRadius: '8px', padding: '12px', margin: '4px 0 0 0' }}>
-                                  <div style={{ color: 'var(--text)', fontSize: '0.8125rem', lineHeight: 1.6 }}>{n.ai_synthesis || n.raw_notes}</div>
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </>
-                    )}
-                  </>
-                )}
-              </>
-            )}
-          </>
-        ) : (
-          <div>
-            <div style={{ fontSize: '0.8125rem', color: 'var(--secondary)', fontWeight: 600, marginBottom: '12px' }}>My Journal Entries {dateFrom || dateTo ? `(${filteredOwn.length} shown)` : ''}</div>
-            {filteredOwn.length === 0 ? (
-              <div style={{ color: 'var(--muted)', fontSize: '0.8125rem' }}>No journal entries yet.</div>
-            ) : (
-              filteredOwn.map((e: any, i: number) => {
-                const key = `j_self_${i}`
-                const open = expandedEntries[key]
-                const ts = e.timestamp ? new Date(e.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
-                return (
-                  <div key={key} style={{ marginBottom: '6px' }}>
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <button onClick={() => toggleExpand(setExpandedEntries, key)}
-                        style={{
-                          flex: 1, padding: '6px 10px', background: 'var(--surface)',
-                          border: '1px solid var(--border)', borderRadius: '6px',
-                          color: 'var(--text)', fontSize: '0.8125rem', cursor: 'pointer', textAlign: 'left',
-                        }}>
-                        📄 {ts} {open ? '▲' : '▼'}
-                      </button>
-                      <button onClick={() => downloadCsv(`journal_${i}.csv`, [['Timestamp', 'Summary'], [ts, e.summary || '']])}
-                        style={{ padding: '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', color: 'var(--secondary)', cursor: 'pointer', fontSize: '0.75rem' }}>
-                        ⬇
-                      </button>
-                    </div>
-                    {open && (
-                      <div style={{ background: 'var(--surface-soft)', border: '1px solid var(--border)', borderRadius: '8px', padding: '12px', margin: '4px 0 0 0' }}>
-                        <div style={{ color: 'var(--text)', fontSize: '0.8125rem', lineHeight: 1.6 }}>{e.summary}</div>
-                        {e.emotions && <div style={{ color: 'var(--muted)', fontSize: '0.6875rem', marginTop: '4px' }}>Emotions: {e.emotions}</div>}
-                      </div>
-                    )}
-                  </div>
-                )
-              })
-            )}
+                      })}
+                    </>
+                  )}
+                </>
+              )}
+            </>
+          )}
+        </>
+      ) : (
+        <div>
+          <div style={{ fontWeight: 800, fontSize: '0.8rem', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '12px' }}>
+            My journal entries {dateFrom || dateTo ? `(${filteredOwn.length} shown)` : ''}
           </div>
-        )}
-      </div>
+          {filteredOwn.length === 0 ? (
+            <div className="card-sm" style={{ color: 'var(--muted)' }}>No journal entries yet.</div>
+          ) : (
+            filteredOwn.map((e: any, i: number) => {
+              const key = `j_self_${e.id ?? i}`
+              const open = expandedEntries[key]
+              const ts = e.timestamp ? new Date(e.timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
+              return (
+                <div key={key} style={{ marginBottom: '6px' }}>
+                  <button onClick={() => toggleExpand(setExpandedEntries, key)}
+                    style={{
+                      width: '100%', padding: '9px 13px', background: open ? 'var(--accent-soft)' : 'var(--surface)',
+                      border: `1px solid ${open ? 'var(--accent)' : 'var(--border)'}`, borderRadius: '12px',
+                      color: 'var(--text)', fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+                      display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'space-between',
+                    }}>
+                    <span>📄 {ts}</span>
+                    <span style={{ color: 'var(--muted)', fontSize: '0.65rem' }}>{open ? '▲' : '▼'}</span>
+                  </button>
+                  {open && (
+                    <div style={{ background: 'var(--surface-soft)', border: '1px solid var(--border)', borderRadius: '14px', padding: '13px 15px', margin: '4px 0 0' }}>
+                      <div style={{ color: 'var(--text)', fontSize: '0.82rem', lineHeight: 1.6 }}>{e.summary}</div>
+                      {e.emotions && <div style={{ color: 'var(--muted)', fontSize: '0.68rem', marginTop: '6px' }}>Emotions: {e.emotions}</div>}
+                    </div>
+                  )}
+                </div>
+              )
+            })
+          )}
+        </div>
+      )}
     </div>
   )
 }

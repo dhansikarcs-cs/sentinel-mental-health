@@ -5,6 +5,7 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
 
 jobs:
   lint-and-typecheck:
@@ -86,10 +87,90 @@ jobs:
       - name: Build frontend image
         run: docker build -t sentinel-frontend:latest -f frontend/Dockerfile frontend/
 
-  deploy:
+  build-azure-image:
     runs-on: ubuntu-latest
-    needs: [docker-build]
-    if: github.ref == 'refs/heads/main'
+    needs: [lint-and-typecheck, backend-tests, frontend-build]
+    # Sanity check for the Docker path (docs/DEPLOY_AZURE.md → Path B).
+    # The default deploy below is a no-Docker code deploy.
     steps:
-      - name: Deploy placeholder
-        run: echo "Deploy step — configure for your target environment"
+      - uses: actions/checkout@v4
+      - name: Build Azure App Service image (single container)
+        run: docker build -t sentinel-azure:latest -f Dockerfile.azure .
+
+  deploy:
+    # No-Docker CODE deploy: packages the Python backend + built frontend and
+    # zip-deploys to App Service with a publish profile. Oryx then runs
+    # `pip install -r requirements.txt` on the server (remote build).
+    # Requires exactly TWO GitHub secrets:
+    #   AZURE_WEBAPP_NAME            — App Service name (e.g. sentinelphyc-f5htbzb4dketg7hk)
+    #   AZURE_WEBAPP_PUBLISH_PROFILE — from App Service → Overview → Download publish profile
+    # See docs/DEPLOY_AZURE.md → "Path A — Code deploy (no Docker)".
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck, backend-tests, frontend-build]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preflight — verify required secrets
+        env:
+          WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
+          PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        run: |
+          missing=0
+          if [ -z "$WEBAPP_NAME" ]; then
+            echo "::error::GitHub secret AZURE_WEBAPP_NAME is not set. Set it to the App Service name (e.g. sentinelphyc-f5htbzb4dketg7hk)."
+            missing=1
+          fi
+          if [ -z "$PUBLISH_PROFILE" ]; then
+            echo "::error::GitHub secret AZURE_WEBAPP_PUBLISH_PROFILE is not set. In the Azure portal: App Service → Overview → 'Download publish profile', then paste the downloaded XML file's contents as this repo secret. See docs/DEPLOY_AZURE.md → Path A."
+            missing=1
+          fi
+          exit $missing
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend bundle
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Stage deployment package
+        run: |
+          STAGING=$(mktemp -d)
+          cp -r backend/. "$STAGING/"
+          mkdir -p "$STAGING/frontend"
+          cp -r frontend/dist "$STAGING/frontend/dist"
+          cp .deployment azure-startup.sh "$STAGING/"
+          (cd "$STAGING" && zip -qr "$GITHUB_WORKSPACE/deploy.zip" .)
+          ls -lh "$GITHUB_WORKSPACE/deploy.zip"
+
+      - name: Deploy to App Service (code deploy, no Docker)
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: deploy.zip
+
+      - name: Smoke test /health
+        env:
+          WEBAPP_NAME: ${{ secrets.AZURE_WEBAPP_NAME }}
+        run: |
+          ok=""
+          for i in $(seq 1 30); do
+            if curl -sf -m 10 "https://${WEBAPP_NAME}.azurewebsites.net/health" | grep -Eq '"status": ?"healthy"'; then
+              ok=1
+              break
+            fi
+            sleep 10
+          done
+          if [ -z "$ok" ]; then
+            echo "✗ Health check failed — check App Service → Log Stream for startup errors"
+            curl -s -m 10 "https://${WEBAPP_NAME}.azurewebsites.net/health" || true
+            exit 1
+          fi
+          echo "✓ Deployment healthy"

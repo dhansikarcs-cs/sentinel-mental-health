@@ -16,12 +16,17 @@ router = APIRouter(prefix="/activity", tags=["activity"])
 
 @router.get("")
 def get_activity_feed(
-    user: User = Depends(require_role("psychologist")), days: int = Query(7, ge=1, le=90), db: Session = Depends(get_db)
+    user: User = Depends(require_role("psychologist", "admin")),
+    days: int = Query(7, ge=1, le=90),
+    db: Session = Depends(get_db),
 ):
     cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
     events = []
 
-    patients = db.query(User).filter(User.assigned_psych == user.username, User.role == "patient").all()
+    if user.role == "admin":
+        patients = db.query(User).filter(User.role == "patient").all()
+    else:
+        patients = db.query(User).filter(User.assigned_psych == user.username, User.role == "patient").all()
     patient_usernames = [p.username for p in patients]
 
     for p in patient_usernames:
@@ -61,9 +66,10 @@ def get_activity_feed(
                 }
             )
 
-    for b in (
-        db.query(Booking).filter(Booking.psychologist_username == user.username, Booking.created_at >= cutoff).all()
-    ):
+    booking_q = db.query(Booking).filter(Booking.created_at >= cutoff)
+    if user.role != "admin":
+        booking_q = booking_q.filter(Booking.psychologist_username == user.username)
+    for b in booking_q.all():
         events.append(
             {
                 "type": "booking",

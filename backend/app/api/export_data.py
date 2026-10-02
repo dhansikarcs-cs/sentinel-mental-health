@@ -18,12 +18,15 @@ router = APIRouter(prefix="/export", tags=["export"])
 
 @router.get("/journal-summaries")
 def export_journal_summaries(
-    user: User = Depends(require_role("psychologist")),
+    user: User = Depends(require_role("psychologist", "admin")),
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
 ):
     cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
-    patients = db.query(User).filter(User.assigned_psych == user.username, User.role == "patient").all()
+    if user.role == "admin":
+        patients = db.query(User).filter(User.role == "patient").all()
+    else:
+        patients = db.query(User).filter(User.assigned_psych == user.username, User.role == "patient").all()
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -68,7 +71,7 @@ def export_journal_summaries(
 
 @router.get("/clinical-notes")
 def export_clinical_notes(
-    user: User = Depends(require_role("psychologist")),
+    user: User = Depends(require_role("psychologist", "admin")),
     days: int = Query(30, ge=1, le=365),
     db: Session = Depends(get_db),
 ):
@@ -80,12 +83,10 @@ def export_clinical_notes(
     writer = csv.writer(output)
     writer.writerow(["Patient", "Date", "Raw Notes", "AI Synthesis"])
 
-    notes = (
-        db.query(ClinicalNote)
-        .filter(ClinicalNote.psychologist_username == user.username, ClinicalNote.timestamp >= cutoff)
-        .order_by(ClinicalNote.timestamp)
-        .all()
-    )
+    notes_q = db.query(ClinicalNote).filter(ClinicalNote.timestamp >= cutoff)
+    if user.role != "admin":
+        notes_q = notes_q.filter(ClinicalNote.psychologist_username == user.username)
+    notes = notes_q.order_by(ClinicalNote.timestamp).all()
 
     for n in notes:
         writer.writerow(
@@ -106,8 +107,14 @@ def export_clinical_notes(
 
 
 @router.get("/patient-data")
-def export_patient_data(user: User = Depends(require_role("psychologist")), db: Session = Depends(get_db)):
-    patients = db.query(User).filter(User.assigned_psych == user.username, User.role == "patient").all()
+def export_patient_data(
+    user: User = Depends(require_role("psychologist", "admin")),
+    db: Session = Depends(get_db),
+):
+    if user.role == "admin":
+        patients = db.query(User).filter(User.role == "patient").all()
+    else:
+        patients = db.query(User).filter(User.assigned_psych == user.username, User.role == "patient").all()
 
     output = io.StringIO()
     writer = csv.writer(output)

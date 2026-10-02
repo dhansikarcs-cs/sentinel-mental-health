@@ -2,13 +2,14 @@ import os
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.api_response import ok
 from app.core.database import get_db
 from app.core.dependencies import get_current_user, require_role
 from app.core.input_validator import validate_file_upload
+from app.core.structured_errors import ErrorCode, err
 from app.events import get_event_bus
 from app.models.followup import FollowupTask
 from app.models.user import User
@@ -26,9 +27,9 @@ router = APIRouter(prefix="/followups", tags=["followups"])
 def _assert_owner(task: FollowupTask, user: User) -> None:
     """Patients may only touch their own tasks; psychologists their own assignments."""
     if user.role == "psychologist" and task.psychologist_username != user.username:
-        raise HTTPException(status_code=404, detail="Followup not found")
+        raise err(404, ErrorCode.FOLLOWUP_NOT_FOUND, "Followup not found")
     if user.role != "psychologist" and task.patient_username != user.username:
-        raise HTTPException(status_code=404, detail="Followup not found")
+        raise err(404, ErrorCode.FOLLOWUP_NOT_FOUND, "Followup not found")
 
 
 @router.post("", response_model=FollowupResponse)
@@ -58,11 +59,40 @@ def create_followup(
 
 
 @router.get("", response_model=list[FollowupResponse])
-def get_followups(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def get_followups(
+    status: str = Query("", description="Comma-separated statuses, e.g. pending,completed"),
+    patient: str = Query("", description="Psychologists: filter by client username"),
+    due_before: str = Query("", description="YYYY-MM-DD — only tasks due on/before this date"),
+    overdue: bool = Query(False, description="Only pending tasks past their due date"),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Follow-up tasks with optional filters.
+
+    Patients always get their own tasks; psychologists get their assignments.
+    Filters compose: status + overdue + due_before can be combined, and the
+    patient filter is clinician-only (patients can never widen their scope).
+    """
     repo = FollowupRepository(db)
     if user.role == "psychologist":
-        return repo.get_for_psychologist(user.username)
-    return repo.get_for_patient(user.username)
+        tasks = repo.get_for_psychologist(user.username)
+    else:
+        tasks = repo.get_for_patient(user.username)
+
+    if user.role == "psychologist" and patient:
+        tasks = [t for t in tasks if t.patient_username == patient]
+
+    if status:
+        wanted = {s.strip().lower() for s in status.split(",") if s.strip()}
+        tasks = [t for t in tasks if (t.status or "").lower() in wanted]
+
+    today = datetime.now(UTC).date().isoformat()
+    if overdue:
+        tasks = [t for t in tasks if t.status == "pending" and t.due_date and t.due_date < today]
+    if due_before:
+        tasks = [t for t in tasks if t.due_date and t.due_date <= due_before]
+
+    return tasks
 
 
 @router.put("/{task_id}", response_model=FollowupResponse)
@@ -72,7 +102,7 @@ def update_followup(
     repo = FollowupRepository(db)
     task = repo.get_by_id(task_id)
     if not task:
-        return {"error": "Not found"}
+        raise err(404, ErrorCode.FOLLOWUP_NOT_FOUND, "Followup not found")
     _assert_owner(task, user)
     now = datetime.now(UTC).isoformat()
     grade_changed = False
@@ -123,6 +153,23 @@ def update_followup(
     return task
 
 
+@router.get("/stats")
+def followup_stats(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Small rollup for the filter bar chips: counts by status + overdue."""
+    repo = FollowupRepository(db)
+    if user.role == "psychologist":
+        tasks = repo.get_for_psychologist(user.username)
+    else:
+        tasks = repo.get_for_patient(user.username)
+    today = datetime.now(UTC).date().isoformat()
+    return {
+        "total": len(tasks),
+        "pending": sum(1 for t in tasks if t.status == "pending"),
+        "completed": sum(1 for t in tasks if t.status == "completed"),
+        "overdue": sum(1 for t in tasks if t.status == "pending" and t.due_date and t.due_date < today),
+    }
+
+
 @router.post("/{task_id}/upload")
 async def upload_followup_file(
     task_id: str, file: UploadFile = File(...), user: User = Depends(get_current_user), db: Session = Depends(get_db)
@@ -130,7 +177,7 @@ async def upload_followup_file(
     repo = FollowupRepository(db)
     task = repo.get_by_id(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Followup not found")
+        raise err(404, ErrorCode.FOLLOWUP_NOT_FOUND, "Followup not found")
     _assert_owner(task, user)
     content = await validate_file_upload(file)
     ext = os.path.splitext(file.filename or "file")[1]
@@ -151,7 +198,7 @@ async def upload_followup_proof(
     repo = FollowupRepository(db)
     task = repo.get_by_id(task_id)
     if not task:
-        raise HTTPException(status_code=404, detail="Followup not found")
+        raise err(404, ErrorCode.FOLLOWUP_NOT_FOUND, "Followup not found")
     _assert_owner(task, user)
     content = await validate_file_upload(file)
     ext = os.path.splitext(file.filename or "file")[1]
@@ -174,8 +221,8 @@ def download_followup_file(task_id: str, user: User = Depends(get_current_user),
     repo = FollowupRepository(db)
     task = repo.get_by_id(task_id)
     if not task or not task.file_path:
-        return {"error": "Not found"}
+        raise err(404, ErrorCode.FOLLOWUP_NOT_FOUND, "Followup not found")
     _assert_owner(task, user)
     if not os.path.exists(task.file_path):
-        return {"error": "File not found on disk"}
+        raise err(404, ErrorCode.ATTACHMENT_NOT_FOUND, "File not found on disk")
     return FileResponse(task.file_path, filename=os.path.basename(task.file_path))

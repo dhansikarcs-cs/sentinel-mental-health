@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
 from app.core.rbac import ensure_owns_or_psych
+from app.core.structured_errors import ErrorCode, err
 from app.models.risk_assessment import RiskAssessment
 from app.models.user import User
 from app.schemas.risk_assessment import RiskAssessmentResponse
@@ -17,7 +18,7 @@ def get_risk_assessment_by_journal(
 ):
     result = db.query(RiskAssessment).filter(RiskAssessment.journal_id == journal_id).first()
     if not result:
-        raise HTTPException(status_code=404, detail="Risk assessment not found")
+        raise err(404, ErrorCode.RISK_ASSESSMENT_NOT_FOUND, "Risk assessment not found")
     ensure_owns_or_psych(result.patient_username, user)
     return result
 

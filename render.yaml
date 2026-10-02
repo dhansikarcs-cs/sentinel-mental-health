@@ -26,6 +26,28 @@ services:
         value: "false"
       - key: RATE_LIMIT_BACKEND
         value: "db"
+      - key: WS_PUBSUB
+        value: "auto"
+      - key: COOKIE_SECURE
+        value: "true"
+      # ── Encryption (journals at rest) ──
+      # Set once and NEVER change — data becomes undecryptable if it changes.
+      - key: ENCRYPTION_PASSPHRASE
+        sync: false
+      - key: ENCRYPTION_SALT
+        sync: false
+      - key: ENCRYPTION_REQUIRED
+        value: "true"
+      # ── Azure AI Foundry (journal summaries) ──
+      - key: AZURE_AI_ENDPOINT
+        sync: false
+      - key: AZURE_AI_KEY
+        sync: false
+      - key: AZURE_DEPLOYMENT
+        value: gpt-5.4-mini
+      - key: ALLOW_CLOUD_AI
+        value: "true"
+      # ── Email / crisis escalation ──
       - key: SMTP_HOST
         sync: false
       - key: SMTP_USER
@@ -36,6 +58,10 @@ services:
         sync: false
       - key: CRISIS_HELPLINE_EMAIL
         sync: false
+      - key: TRUSTEE_LINK_SECRET
+        generateValue: true
+      - key: SENTINEL_ACK_LINK
+        value: https://sentinel-frontend.onrender.com/trustee
 
   - type: worker
     name: sentinel-scheduler
@@ -54,6 +80,10 @@ services:
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
+      - key: ENCRYPTION_PASSPHRASE
+        sync: false
+      - key: ENCRYPTION_SALT
+        sync: false
       - key: RUN_WORKERS
         value: "true"
 

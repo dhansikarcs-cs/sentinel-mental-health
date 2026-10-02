@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api/client'
 import { getUser } from '../stores/auth'
-import { moodIcon, formatTime } from '../constants'
+import { moodIcon, moodColor, formatTime } from '../constants'
 import PatientSelector from '../components/PatientSelector'
 
-function eventBorder(type: string) {
-  return { borderLeft: `3px solid ${type === 'mood' ? 'var(--ok)' : type === 'journal' ? '#6366f1' : type === 'followup' ? 'var(--warn)' : 'var(--danger)'}`, background: 'var(--surface-soft)', borderRadius: '6px', padding: '8px 12px', margin: '4px 0' }
+const EVENT_STYLES: Record<string, { dot: string; label: string }> = {
+  mood: { dot: 'var(--ok)', label: 'Mood' },
+  journal: { dot: 'var(--violet)', label: 'Journal' },
+  followup: { dot: 'var(--warn)', label: 'Task' },
+  crisis: { dot: 'var(--danger)', label: 'Crisis' },
 }
 
 export default function TimelinePage() {
@@ -35,137 +38,118 @@ export default function TimelinePage() {
     } catch {}
   }
 
+  const trendArrow = (t?: string) =>
+    t === 'improving' || t === 'increasing' ? '↗' : t === 'declining' ? '↘' : t === 'stable' ? '→' : '—'
+  const trendColor = (t?: string) =>
+    t === 'improving' || t === 'increasing' ? 'var(--ok)' : t === 'declining' ? 'var(--danger)' : 'var(--warn)'
+
   return (
     <div className="animate-fade-in">
       {isPsych && (
-        <div>
-          <h2>🔍 Behavioral Timeline</h2>
-          <div style={{ color: 'var(--muted)', fontSize: '0.85rem', marginBottom: '16px' }}>
-            Track behavioral evolution across time — not isolated symptoms. Select a patient to see their unified event feed and change metrics.
+        <div style={{ display: 'flex', gap: '12px', marginBottom: '18px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ flex: 2, minWidth: '200px' }}>
+            <label>Client</label>
+            <PatientSelector patients={patients} value={selectedPatient} onChange={setSelectedPatient} placeholder="Select…" />
           </div>
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-            <div style={{ flex: 2 }}>
-              <label>Select Patient</label>
-              <PatientSelector patients={patients} value={selectedPatient} onChange={setSelectedPatient} placeholder="Select..." />
-            </div>
-            <div style={{ flex: 1 }}>
-              <label>Time range</label>
-              <input type="range" min={7} max={90} value={days} onChange={e => setDays(Number(e.target.value))} style={{ padding: '0' }} />
-              <div style={{ color: 'var(--muted)', fontSize: '0.75rem', textAlign: 'center' }}>{days} days</div>
-            </div>
+          <div style={{ flex: 1, minWidth: '160px' }}>
+            <label>Time range · {days} days</label>
+            <input type="range" min={7} max={90} value={days} onChange={e => setDays(Number(e.target.value))} />
           </div>
         </div>
       )}
 
-      {!isPsych && <h2>📋 Behavioral Timeline</h2>}
-
       {!selectedPatient ? (
-        <div className="card"><span style={{ color: 'var(--muted)' }}>Select a patient to view their timeline.</span></div>
+        <div className="card" style={{ textAlign: 'center', padding: '32px' }}>
+          <div style={{ fontSize: '1.8rem', marginBottom: '6px' }}>🗓</div>
+          <div style={{ fontWeight: 700 }}>Select a client to view their timeline</div>
+          <div style={{ color: 'var(--muted)', fontSize: '0.8rem' }}>A unified feed of moods, journals, tasks and crises.</div>
+        </div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '24px' }}>
-          {/* Metrics Panel */}
-          <div>
-            <h3>📊 Change Metrics</h3>
-            <div className="card-dark" style={{ padding: '14px' }}>
-              {metrics && (
-                <>
-                  <div style={{ marginBottom: '10px' }}>
-                    <div style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>MOOD TREND (7d vs 7-14d ago)</div>
-                    <div style={{ color: metrics.mood_trend === 'improving' ? 'var(--ok)' : metrics.mood_trend === 'declining' ? 'var(--danger)' : '#A66E0C', fontSize: '1.3rem', fontWeight: 700 }}>
-                      {metrics.mood_trend === 'improving' ? '↗️ improving' : metrics.mood_trend === 'declining' ? '↘️ declining' : metrics.mood_trend === 'stable' ? '→️ stable' : '—'}
-                    </div>
-                    <div style={{ color: 'var(--soft)', fontSize: '0.75rem' }}>
-                      Current avg: {metrics.current_mood_avg ? `${metrics.current_mood_avg.toFixed(1)}/5` : 'N/A'} | Previous: {metrics.previous_mood_avg ? `${metrics.previous_mood_avg.toFixed(1)}/5` : 'N/A'}
-                    </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '18px', alignItems: 'start' }} className="tl-grid">
+          {/* Metrics panel */}
+          <div className="card-dark">
+            <h3 style={{ marginBottom: '14px' }}>📊 Change metrics</h3>
+            {metrics ? (
+              <>
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ color: '#A6AC9D', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Mood trend (7d vs prior)</div>
+                  <div style={{ color: trendColor(metrics.mood_trend), fontSize: '1.4rem', fontWeight: 800 }}>
+                    {trendArrow(metrics.mood_trend)} {metrics.mood_trend || '—'}
                   </div>
-
-                  <div style={{ marginBottom: '10px' }}>
-                    <div style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>ENGAGEMENT (journal entries)</div>
-                    <div style={{ color: metrics.engagement_trend === 'increasing' ? 'var(--ok)' : metrics.engagement_trend === 'declining' ? 'var(--danger)' : '#A66E0C', fontSize: '1.3rem', fontWeight: 700 }}>
-                      {metrics.engagement_trend === 'increasing' ? '↗️' : metrics.engagement_trend === 'declining' ? '↘️' : metrics.engagement_trend === 'stable' ? '→️' : '—'}
-                    </div>
-                    <div style={{ color: 'var(--soft)', fontSize: '0.75rem' }}>
-                      Last 7d: {metrics.journal_count_7 || 0} | Last 14d: {metrics.journal_count_14 || 0}
-                    </div>
+                  <div style={{ color: '#A6AC9D', fontSize: '0.72rem' }}>
+                    Now {metrics.current_mood_avg ? Number(metrics.current_mood_avg).toFixed(1) : '—'}/5 · before {metrics.previous_mood_avg ? Number(metrics.previous_mood_avg).toFixed(1) : '—'}/5
                   </div>
+                </div>
 
-                      {metrics.latest_mood && (
-                    <div>
-                      <div style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>LATEST MOOD</div>
-                      <div style={{ fontSize: '1.5rem' }}>{moodIcon(metrics.latest_mood.label)}</div>
-                      <div style={{ color: 'var(--soft)', fontSize: '0.75rem' }}>{metrics.latest_mood.label} — {formatTime(metrics.latest_mood.timestamp)}</div>
-                    </div>
-                  )}
-                </>
-              )}
-              {!metrics && <div style={{ color: 'var(--muted)', fontSize: '0.8125rem' }}>No data available.</div>}
-            </div>
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ color: '#A6AC9D', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Engagement</div>
+                  <div style={{ color: trendColor(metrics.engagement_trend), fontSize: '1.4rem', fontWeight: 800 }}>
+                    {trendArrow(metrics.engagement_trend)} {metrics.journal_count_7 || 0}
+                  </div>
+                  <div style={{ color: '#A6AC9D', fontSize: '0.72rem' }}>journals this week · {metrics.journal_count_14 || 0} in 14d</div>
+                </div>
+
+                {metrics.latest_mood && (
+                  <div>
+                    <div style={{ color: '#A6AC9D', fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Latest mood</div>
+                    <div style={{ fontSize: '1.7rem' }}>{moodIcon(metrics.latest_mood.label)}</div>
+                    <div style={{ color: '#A6AC9D', fontSize: '0.72rem' }}>{metrics.latest_mood.label} — {formatTime(metrics.latest_mood.timestamp)}</div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div style={{ color: '#A6AC9D', fontSize: '0.82rem' }}>No data available.</div>
+            )}
           </div>
 
-          {/* Event Feed */}
+          {/* Event feed */}
           <div>
-            <h3>📅 Event Feed</h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+              <h3 style={{ margin: 0 }}>📅 Event feed</h3>
+              <span className="badge-theme">{events.length} events · {days}d</span>
+            </div>
             {events.length === 0 ? (
-              <div className="card"><span style={{ color: 'var(--muted)' }}>No events in the selected time period.</span></div>
+              <div className="card" style={{ textAlign: 'center', color: 'var(--muted)' }}>No events in this window.</div>
             ) : (
-              <div style={{ maxHeight: '500px', overflowY: 'auto', paddingRight: '6px' }}>
+              <div style={{ maxHeight: '560px', overflowY: 'auto', paddingRight: '6px', position: 'relative' }}>
+                {/* vertical rail */}
+                <div style={{ position: 'absolute', left: '17px', top: '10px', bottom: '10px', width: '2px', background: 'var(--border)' }} />
                 {events.map((ev: any, i: number) => {
-                  const etype = ev.type
-                  if (etype === 'mood') {
-                    const label = ev.data?.label || 'unknown'
-                    return (
-                      <div key={i} style={eventBorder(etype)}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div><span style={{ color: 'var(--strong)', fontWeight: 600, fontSize: '0.85rem' }}>{moodIcon(label)} [{label.toUpperCase()}]</span></div>
-                          <span style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>{formatTime(ev.timestamp)}</span>
+                  const st = EVENT_STYLES[ev.type] || { dot: 'var(--muted)', label: ev.type }
+                  const d = ev.data || {}
+                  return (
+                    <div key={i} style={{ display: 'flex', gap: '12px', marginBottom: '8px', position: 'relative' }}>
+                      <div style={{
+                        width: '12px', height: '12px', minWidth: '12px', borderRadius: 999,
+                        background: st.dot, border: '2.5px solid var(--surface)',
+                        marginTop: '14px', zIndex: 1,
+                      }} />
+                      <div className="card-sm" style={{ flex: 1, borderRadius: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--heading)' }}>
+                            {ev.type === 'mood' && <>{moodIcon(d.label)} <span style={{ color: moodColor(d.label), textTransform: 'capitalize' }}>{d.label}</span> mood</>}
+                            {ev.type === 'journal' && <>📝 {d.title || 'Journal entry'}</>}
+                            {ev.type === 'followup' && <>{d.status === 'completed' ? '✅' : '⏳'} {d.title || 'Task'}</>}
+                            {ev.type === 'crisis' && <>🚨 {(d.event || 'Crisis').toUpperCase()}</>}
+                          </span>
+                          <span style={{ fontSize: '0.65rem', color: 'var(--faint)', whiteSpace: 'nowrap' }}>{formatTime(ev.timestamp)}</span>
                         </div>
-                        <div style={{ color: 'var(--soft)', fontSize: '0.75rem', marginTop: '2px' }}>Mood logged: {label} on {ev.data?.date || ''}</div>
-                      </div>
-                    )
-                  }
-                  if (etype === 'journal') {
-                    const d = ev.data || {}
-                    return (
-                      <div key={i} style={eventBorder(etype)}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div><span style={{ color: 'var(--strong)', fontWeight: 600, fontSize: '0.85rem' }}>📝 {d.title || 'Journal Entry'}</span></div>
-                          <span style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>{formatTime(ev.timestamp)}</span>
+                        <div style={{ color: 'var(--secondary)', fontSize: '0.74rem', marginTop: '3px', lineHeight: 1.5 }}>
+                          {ev.type === 'mood' && `Logged on ${d.date || ''}`}
+                          {ev.type === 'journal' && (d.summary || '').slice(0, 180)}
+                          {ev.type === 'followup' && (d.description || '')}
+                          {ev.type === 'crisis' && (d.details || d.event || '')}
                         </div>
-                        <div style={{ color: 'var(--soft)', fontSize: '0.75rem', marginTop: '2px' }}>{(d.summary || '').slice(0, 200)}</div>
                       </div>
-                    )
-                  }
-                  if (etype === 'followup') {
-                    const d = ev.data || {}
-                    return (
-                      <div key={i} style={eventBorder(etype)}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div><span style={{ color: 'var(--strong)', fontWeight: 600, fontSize: '0.85rem' }}>{d.status === 'completed' ? '✅' : '⏳'} {d.title || 'Task'}</span></div>
-                          <span style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>{formatTime(d.completed_at || d.assigned_at || '')}</span>
-                        </div>
-                        <div style={{ color: 'var(--soft)', fontSize: '0.75rem', marginTop: '2px' }}>{d.description || ''}</div>
-                      </div>
-                    )
-                  }
-                  if (etype === 'crisis') {
-                    const d = ev.data || {}
-                    return (
-                      <div key={i} style={eventBorder(etype)}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div><span style={{ color: 'var(--strong)', fontWeight: 600, fontSize: '0.85rem' }}>🚨 {(d.event || 'Crisis').toUpperCase()}</span></div>
-                          <span style={{ color: 'var(--muted)', fontSize: '0.7rem' }}>{formatTime(ev.timestamp)}</span>
-                        </div>
-                        <div style={{ color: 'var(--soft)', fontSize: '0.75rem', marginTop: '2px' }}>{d.details || d.event || ''}</div>
-                      </div>
-                    )
-                  }
-                  return null
+                    </div>
+                  )
                 })}
               </div>
             )}
           </div>
         </div>
       )}
+      <style>{`@media (max-width: 960px) { .tl-grid { grid-template-columns: 1fr !important; } }`}</style>
     </div>
   )
 }
