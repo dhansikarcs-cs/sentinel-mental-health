@@ -63,30 +63,6 @@ services:
       - key: SENTINEL_ACK_LINK
         value: https://sentinel-frontend-dhkcs.onrender.com/trustee
 
-  - type: worker
-    name: sentinel-scheduler-dhkcs
-    # Runs with a PostgreSQL advisory lock so multiple replicas are failover-safe:
-    # exactly one active scheduler drives the reminder/celebration loops. To scale
-    # out, increase the instance count on this worker; the rest stand by.
-    runtime: docker
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
-    plan: free
-    command: python -m app.workers.runner
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: sentinel-db-dhkcs
-          property: connectionString
-      - key: JWT_SECRET
-        generateValue: true
-      - key: ENCRYPTION_PASSPHRASE
-        sync: false
-      - key: ENCRYPTION_SALT
-        sync: false
-      - key: RUN_WORKERS
-        value: "true"
-
   - type: web
     name: sentinel-frontend-dhkcs
     runtime: docker
