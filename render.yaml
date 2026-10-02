@@ -16,7 +16,7 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase:
-          name: sentinel-db
+          name: sentinel-db-dhkcs
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
@@ -71,7 +71,7 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    plan: starter
+    plan: free
     command: python -m app.workers.runner
     envVars:
       - key: DATABASE_URL
@@ -93,7 +93,7 @@ services:
     dockerfilePath: ./frontend/Dockerfile
     dockerContext: ./frontend
     healthCheckPath: /
-    plan: starter
+    plan: free
     envVars:
       - key: BACKEND_URL
         value: https://sentinel-backend-dhkcs.onrender.com
