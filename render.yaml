@@ -11,6 +11,7 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
+    # Liveness probe used by Render to mark the deploy healthy.
     healthCheckPath: /health
     plan: free
     envVars:
