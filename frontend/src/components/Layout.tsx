@@ -313,7 +313,7 @@ export default function Layout() {
   )
 
   return (
-    <div style={{ minHeight: '100vh', padding: '14px 18px 14px 96px', position: 'relative', zIndex: 1 }}>
+    <div className="app-shell" style={{ minHeight: '100vh', padding: '14px 18px 14px 96px', position: 'relative', zIndex: 1 }}>
       {/* ══ Aurora background — landing glow blobs drifting behind the app ══ */}
       <div className="aurora" aria-hidden>
         <span className="a1" />
