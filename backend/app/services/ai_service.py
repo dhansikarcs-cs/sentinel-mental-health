@@ -94,9 +94,14 @@ def _query_azure(prompt: str, timeout: int = 20, prompt_version: str = "") -> st
         payload = {
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.3,
-            "max_tokens": settings.azure_max_tokens,
             **body_extra,
         }
+        # GPT-5-class models (Foundry route) reject `max_tokens` in favour of
+        # `max_completion_tokens`; classic Azure OpenAI deployments use `max_tokens`.
+        if ".services.ai.azure.com" in url:
+            payload["max_completion_tokens"] = settings.azure_max_tokens
+        else:
+            payload["max_tokens"] = settings.azure_max_tokens
         req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
         resp = urllib.request.urlopen(req, timeout=timeout)
         result = json.loads(resp.read().decode())

@@ -35,7 +35,6 @@ from app.api import (
     journal,
     ml_registry,
     mood,
-    netprobe,
     notifications,
     patients,
     physio,
@@ -237,7 +236,6 @@ v1_router.include_router(sensor_readings.router)
 v1_router.include_router(physio.router)
 v1_router.include_router(risk_assessments.router)
 v1_router.include_router(notifications.router)
-v1_router.include_router(netprobe.router)
 v1_router.include_router(ml_registry.router)
 v1_router.include_router(event_store_api.router)
 v1_router.include_router(session_reports.router)
