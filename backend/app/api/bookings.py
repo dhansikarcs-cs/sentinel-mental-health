@@ -71,6 +71,16 @@ def create_booking(entry: BookingCreate, user: User = Depends(get_current_user),
                 "patient_username is required when proposing a slot",
                 details={},
             )
+        target = db.query(User).filter(User.username == patient_username, User.deleted_at.is_(None)).first()
+        if not target or target.role != "patient":
+            raise err(400, ErrorCode.VALIDATION_ERROR, "Unknown patient", details={"username": patient_username})
+        if target.assigned_psych and target.assigned_psych != user.username:
+            raise err(
+                403,
+                ErrorCode.FORBIDDEN,
+                "That client is not assigned to you",
+                details={"username": patient_username},
+            )
     else:
         raise err(403, ErrorCode.FORBIDDEN, "Insufficient permissions", details={})
 
