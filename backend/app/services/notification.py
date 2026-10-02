@@ -80,10 +80,7 @@ def _send_smtp(to: str, subject: str, body: str) -> bool:
     for mode, port in _TRANSPORTS:
         host = _resolve_v4(settings.smtp_host, port)
         try:
-            if mode == "ssl":
-                s = smtplib.SMTP_SSL(host, port, timeout=20)
-            else:
-                s = smtplib.SMTP(host, port, timeout=20)
+            s = smtplib.SMTP_SSL(host, port, timeout=20) if mode == "ssl" else smtplib.SMTP(host, port, timeout=20)
             with s:
                 s.ehlo()
                 if mode == "starttls":
