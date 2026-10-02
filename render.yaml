@@ -1,18 +1,18 @@
 databases:
-  - name: sentinel-db
+  - name: sentinel-db-dhkcs
     databaseName: sentinel
     user: sentinel
-    plan: starter
+    plan: free
     region: oregon
 
 services:
   - type: web
-    name: sentinel-backend
+    name: sentinel-backend-dhkcs
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     healthCheckPath: /health
-    plan: starter
+    plan: free
     envVars:
       - key: DATABASE_URL
         fromDatabase:
@@ -21,7 +21,7 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: CORS_ORIGINS
-        value: https://sentinel-frontend.onrender.com
+        value: https://sentinel-frontend-dhkcs.onrender.com
       - key: RUN_WORKERS
         value: "false"
       - key: RATE_LIMIT_BACKEND
@@ -61,10 +61,10 @@ services:
       - key: TRUSTEE_LINK_SECRET
         generateValue: true
       - key: SENTINEL_ACK_LINK
-        value: https://sentinel-frontend.onrender.com/trustee
+        value: https://sentinel-frontend-dhkcs.onrender.com/trustee
 
   - type: worker
-    name: sentinel-scheduler
+    name: sentinel-scheduler-dhkcs
     # Runs with a PostgreSQL advisory lock so multiple replicas are failover-safe:
     # exactly one active scheduler drives the reminder/celebration loops. To scale
     # out, increase the instance count on this worker; the rest stand by.
@@ -76,7 +76,7 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase:
-          name: sentinel-db
+          name: sentinel-db-dhkcs
           property: connectionString
       - key: JWT_SECRET
         generateValue: true
@@ -88,7 +88,7 @@ services:
         value: "true"
 
   - type: web
-    name: sentinel-frontend
+    name: sentinel-frontend-dhkcs
     runtime: docker
     dockerfilePath: ./frontend/Dockerfile
     dockerContext: ./frontend
@@ -96,4 +96,4 @@ services:
     plan: starter
     envVars:
       - key: BACKEND_URL
-        value: https://sentinel-backend.onrender.com
+        value: https://sentinel-backend-dhkcs.onrender.com
