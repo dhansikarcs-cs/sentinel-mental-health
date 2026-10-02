@@ -1,10 +1,29 @@
 import logging
 import smtplib
+import socket
 from email.message import EmailMessage
 
 from app.core.config import settings
 
 logger = logging.getLogger("sentinel.notification")
+
+
+def _smtp_connect() -> smtplib.SMTP:
+    """Return an SMTP client connected over IPv4.
+
+    Some hosting networks (e.g. Render free instances) have no IPv6 route, and
+    smtplib's default resolution can select an AAAA record first, failing with
+    ``OSError: [Errno 101] Network is unreachable``. Resolving the host to a
+    literal IPv4 address before handing it to smtplib avoids that entirely.
+    """
+    host = settings.smtp_host
+    try:
+        host = socket.getaddrinfo(
+            host, settings.smtp_port, socket.AF_INET, socket.SOCK_STREAM
+        )[0][4][0]
+    except OSError:
+        pass
+    return smtplib.SMTP(host, settings.smtp_port, timeout=10)
 
 
 def send_email(to: str, subject: str, body: str) -> bool:
@@ -21,7 +40,7 @@ def send_email(to: str, subject: str, body: str) -> bool:
             sender = settings.smtp_user or sender
         msg["From"] = sender
         msg["To"] = to
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as s:
+        with _smtp_connect() as s:
             s.ehlo()
             s.starttls()
             s.ehlo()
