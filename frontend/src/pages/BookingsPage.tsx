@@ -785,6 +785,7 @@ function PsychBookingAgent() {
     try {
       await api.createBooking({
         psychologist_username: getUser()?.username,
+        patient_username: selected,
         date: slot.date,
         time: slot.time || '10:00',
         session_type: 'Therapy',

@@ -54,10 +54,27 @@ def _availability_allows(db: Session, psych_username: str, date: str, time: str)
 
 
 @router.post("", response_model=BookingResponse)
-def create_booking(entry: BookingCreate, user: User = Depends(require_role("patient")), db: Session = Depends(get_db)):
+def create_booking(entry: BookingCreate, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     repo = BookingRepository(db)
+    if user.role == "patient":
+        patient_username = user.username
+        psychologist_username = entry.psychologist_username
+        status = "Pending"
+    elif user.role == "psychologist":
+        patient_username = entry.patient_username
+        psychologist_username = user.username
+        status = "Proposed"
+        if not patient_username:
+            raise err(
+                400,
+                ErrorCode.VALIDATION_ERROR,
+                "patient_username is required when proposing a slot",
+                details={},
+            )
+    else:
+        raise err(403, ErrorCode.FORBIDDEN, "Insufficient permissions", details={})
 
-    conflict = _find_conflict(db, entry.psychologist_username, entry.date, entry.time)
+    conflict = _find_conflict(db, psychologist_username, entry.date, entry.time)
     if conflict:
         raise err(
             409,
@@ -65,7 +82,7 @@ def create_booking(entry: BookingCreate, user: User = Depends(require_role("pati
             "That slot was just taken — please pick another time",
             details={"date": entry.date, "time": entry.time},
         )
-    if not _availability_allows(db, entry.psychologist_username, entry.date, entry.time):
+    if not _availability_allows(db, psychologist_username, entry.date, entry.time):
         raise err(
             400,
             ErrorCode.BOOKING_OUTSIDE_AVAILABILITY,
@@ -74,15 +91,15 @@ def create_booking(entry: BookingCreate, user: User = Depends(require_role("pati
         )
 
     booking = Booking(
-        patient_username=user.username,
-        psychologist_username=entry.psychologist_username,
+        patient_username=patient_username,
+        psychologist_username=psychologist_username,
         date=entry.date,
         time=entry.time,
         session_type=entry.session_type,
         members=entry.members,
         contact=entry.contact,
         explanation=entry.explanation,
-        status="Pending",
+        status=status,
         created_at=datetime.now(UTC).isoformat(),
     )
     repo.add(booking)
@@ -96,8 +113,8 @@ def create_booking(entry: BookingCreate, user: User = Depends(require_role("pati
     get_event_bus().emit(
         "booking:created",
         booking_id=booking.id,
-        patient_username=user.username,
-        psych=entry.psychologist_username,
+        patient_username=patient_username,
+        psych=psychologist_username,
         date=entry.date,
     )
     return booking

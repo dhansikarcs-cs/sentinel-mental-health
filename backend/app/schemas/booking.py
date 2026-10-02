@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class BookingCreate(BaseModel):
     psychologist_username: str = Field(min_length=1, max_length=50)
+    patient_username: str = Field(default="", max_length=50)
     date: str = Field(min_length=10, max_length=10)
     time: str = Field(min_length=1, max_length=10)
     session_type: str = Field(default="", max_length=50)
