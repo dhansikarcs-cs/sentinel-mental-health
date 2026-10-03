@@ -107,7 +107,7 @@ def _ensure_ai_provider_constraint():
     if "azure" in sqltext:
         return
     with engine.begin() as conn:
-        conn.execute(text('ALTER TABLE ai_analyses DROP CONSTRAINT ck_ai_provider'))
+        conn.execute(text("ALTER TABLE ai_analyses DROP CONSTRAINT ck_ai_provider"))
         conn.execute(
             text(
                 "ALTER TABLE ai_analyses ADD CONSTRAINT ck_ai_provider "

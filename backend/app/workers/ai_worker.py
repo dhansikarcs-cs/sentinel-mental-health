@@ -250,9 +250,7 @@ def analyze_journal_background(journal_id: int, raw_content: str, patient_userna
                 {
                     "patient": patient_username,
                     "risk_score": risk_score,
-                    "message": CRISIS_POLICY.risk_warning_alert.format(
-                        patient=patient_username, risk_score=risk_score
-                    ),
+                    "message": CRISIS_POLICY.risk_warning_alert.format(patient=patient_username, risk_score=risk_score),
                     "timestamp": datetime.now(UTC).isoformat(),
                 },
             )
