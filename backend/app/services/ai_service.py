@@ -56,14 +56,19 @@ FRIENDLY_JOURNAL_SUMMARY_PROMPT_V1 = (
     "If they are hurting, be soft and steady: 'I hear you. That sounds really heavy. "
     "You didn't have to carry this alone — thank you for writing it down.' "
     "Never moralise, never lecture, never minimize their feelings. "
-    "If the entry suggests self-harm or thoughts of not wanting to be alive, "
-    "keep exactly this supportive tone and gently include: if you're in danger, "
-    "please reach out to emergency services or a crisis line right now (U.S./Canada: "
-    "call or text 988). Do not sound clinical or like a psychologist in the rest of the reply. "
+    "{crisis_guidance}"
+    "Do not sound clinical or like a psychologist in the rest of the reply. "
     "No coping techniques, no self-help instructions — just warm, honest presence. "
     ' Return valid JSON: {{"summary": "..."}}.'
     "\n\nJournal Entry:\n{text}"
 )
+CRISIS_SAFETY_GUIDANCE = (
+    "Because this entry contains explicit self-harm or suicidal language, "
+    "keep exactly this supportive tone and end with a gentle safety note: "
+    "if you're in danger, please reach out to emergency services or a crisis "
+    "line right now (U.S./Canada: call or text 988). "
+)
+NO_CRISIS_GUIDANCE = "Do not mention crisis lines, hotlines, or emergency services — this entry does not warrant it. "
 NOTE_SYNTHESIS_PROMPT_V1 = (
     "You are Sentinel. Convert these session notes into a structured clinical note "
     "with Observations, Assessment, and Plan sections. Use precise emotion language "
@@ -413,6 +418,14 @@ def _is_raw_echo(output: str, original: str) -> bool:
     return overlap > 0.85
 
 
+def _explicit_crisis_language(text: str) -> bool:
+    """True only for clear self-harm or suicidal language (same list as the risk engine)."""
+    from app.ml.risk_engine import CRISIS_KW
+
+    lower = text.lower()
+    return any(kw in lower for kw in CRISIS_KW)
+
+
 def classify_emotions(text: str) -> str:
     top = _get_emotion_clf().predict_top(text, threshold=0.15)
     labels = [e for e, p in top if e != "neutral"]
@@ -453,7 +466,11 @@ def summarize_journal(text: str, mode: str = "patient") -> dict:
         prompt = CLINICAL_JOURNAL_SUMMARY_PROMPT_V1.format(emotion_hint=emotion_hint, text=text)
         prompt_version = "clinical_journal_summary/v1"
     else:
-        prompt = FRIENDLY_JOURNAL_SUMMARY_PROMPT_V1.format(emotion_hint=emotion_hint, text=text)
+        crisis = _explicit_crisis_language(text)
+        crisis_guidance = CRISIS_SAFETY_GUIDANCE if crisis else NO_CRISIS_GUIDANCE
+        prompt = FRIENDLY_JOURNAL_SUMMARY_PROMPT_V1.format(
+            emotion_hint=emotion_hint, crisis_guidance=crisis_guidance, text=text
+        )
         prompt_version = "friendly_journal_summary/v2"
 
     raw = _query_ollama(prompt, timeout=15, prompt_version=prompt_version)
