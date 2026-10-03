@@ -37,13 +37,21 @@ EMOTION_RISK_WEIGHTS: dict[str, float] = {
 CRISIS_KW = [
     "suicide",
     "kill myself",
+    "killing myself",
     "end my life",
+    "ending my life",
+    "end it all",
+    "take my own life",
     "want to die",
+    "don't want to live",
+    "dont want to live",
     "not worth living",
     "self-harm",
+    "self harm",
     "hurt myself",
     "emergency",
     "can't take it",
+    "cant take it",
     "overdose",
 ]
 HIGH_KW = [

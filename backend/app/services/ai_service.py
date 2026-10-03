@@ -62,11 +62,14 @@ FRIENDLY_JOURNAL_SUMMARY_PROMPT_V1 = (
     ' Return valid JSON: {{"summary": "..."}}.'
     "\n\nJournal Entry:\n{text}"
 )
+CRISIS_SAFETY_SENTENCE = (
+    "If you are in danger right now, please reach out to emergency services "
+    "or a crisis line immediately (U.S./Canada: call or text 988)."
+)
 CRISIS_SAFETY_GUIDANCE = (
     "Because this entry contains explicit self-harm or suicidal language, "
     "your very last sentence MUST be exactly (with no changes): "
-    '"If you are in danger right now, please reach out to emergency services '
-    'or a crisis line immediately (U.S./Canada: call or text 988)." '
+    f'"{CRISIS_SAFETY_SENTENCE}" '
     "Keep the sentences before that supportive and non-clinical. "
 )
 NO_CRISIS_GUIDANCE = "Do not mention crisis lines, hotlines, or emergency services — this entry does not warrant it. "
@@ -461,13 +464,17 @@ def summarize_journal(text: str, mode: str = "patient") -> dict:
     emotions_str = ", ".join(e for e, p in top_emotions if e != "neutral") or "neutral"
     emotion_probs_json = json.dumps(emotion_probs)
 
+    crisis = _explicit_crisis_language(text)
+
     emotion_hint = f"\nEmotions detected: {emotions_str}." if emotions_str else ""
 
+    # The classifier (GoEmotions) can mislabel crisis text (e.g. "relief" for a
+    # suicidal entry). Keep its output out of the clinical note: a clinician must
+    # read what the patient actually wrote, not a possibly-wrong emotion guess.
     if mode == "clinical":
-        prompt = CLINICAL_JOURNAL_SUMMARY_PROMPT_V1.format(emotion_hint=emotion_hint, text=text)
+        prompt = CLINICAL_JOURNAL_SUMMARY_PROMPT_V1.format(emotion_hint="", text=text)
         prompt_version = "clinical_journal_summary/v1"
     else:
-        crisis = _explicit_crisis_language(text)
         crisis_guidance = CRISIS_SAFETY_GUIDANCE if crisis else NO_CRISIS_GUIDANCE
         prompt = FRIENDLY_JOURNAL_SUMMARY_PROMPT_V1.format(
             emotion_hint=emotion_hint, crisis_guidance=crisis_guidance, text=text
@@ -487,8 +494,11 @@ def summarize_journal(text: str, mode: str = "patient") -> dict:
         if match:
             try:
                 result = json.loads(match.group())
+                summary = result.get("summary", text[:200])
+                if mode == "patient" and crisis and "988" not in summary:
+                    summary = f"{summary.rstrip()} {CRISIS_SAFETY_SENTENCE}"
                 return {
-                    "summary": result.get("summary", text[:200]),
+                    "summary": summary,
                     "ai_source": source,
                     "emotions": emotions_str,
                     "emotion_probabilities": emotion_probs_json,
@@ -525,6 +535,8 @@ def _fallback_summary(text: str, emotions: str = "", emotion_probs_json: str = "
             summary = f"You're feeling {emotions}. That's completely valid — thanks for sharing how you feel."
         else:
             summary = "Thanks for writing this entry. Your feelings matter and tracking them is a positive step."
+        if _explicit_crisis_language(text):
+            summary = f"{summary} {CRISIS_SAFETY_SENTENCE}"
 
     return {
         "summary": summary,
