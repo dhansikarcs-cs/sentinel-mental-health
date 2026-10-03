@@ -5,6 +5,9 @@
 > **Stack:** FastAPI + SQLAlchemy (SQLite/PostgreSQL) · React 19 + TypeScript + Vite · local-first AI (Ollama) with hosted fallback · PWA · Docker Compose · GitHub Actions CI
 > **Status:** Working prototype · 222 tests (~72s) across 6 CI jobs · Hardware adapters built (BLE-GATT, vendor cloud, deterministic simulator) · 30-subject pilot planned (September 2026)
 
+> **Live demo:** https://sentinel-frontend-dhkcs.onrender.com · API docs: https://sentinel-backend-dhkcs.onrender.com/docs
+> **Origin:** this is the current, actively developed codebase. The original milestone prototype lives at `dhansikarcs-cs/Sentinel_V_1_` (hardware M0 ring SDK, original README/docs).
+
 ---
 
 ## What Sentinel Does
