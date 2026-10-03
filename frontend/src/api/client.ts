@@ -66,6 +66,42 @@ async function tryRefresh(): Promise<boolean> {
   }
 }
 
+// Retry transient failures so a free-tier cold-start blip (502/503/504 or a
+// dropped connection) self-heals instead of surfacing as an error. Reads are
+// always retried; writes are retried only on network-level failures (when the
+// server likely never received the request), never on HTTP errors.
+const RETRYABLE_STATUS = new Set([502, 503, 504])
+const MAX_ATTEMPTS = 3
+
+async function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, method: string): Promise<Response> {
+  let lastErr: unknown = null
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    let res: Response
+    try {
+      res = await fetch(url, init)
+    } catch (err) {
+      lastErr = err
+      const retryNetwork = isNetworkError(err) && (method === 'GET' || method === 'HEAD')
+      if (attempt < MAX_ATTEMPTS && retryNetwork) {
+        await delay(500 * attempt)
+        continue
+      }
+      throw err
+    }
+    const retryHttp = res && RETRYABLE_STATUS.has(res.status) && method === 'GET'
+    if (attempt < MAX_ATTEMPTS && retryHttp) {
+      await delay(500 * attempt)
+      continue
+    }
+    return res
+  }
+  throw lastErr ?? new Error('Request failed after retries')
+}
+
 async function request(path: string, options: RequestInit = {}, isRetry = false): Promise<any> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -73,7 +109,8 @@ async function request(path: string, options: RequestInit = {}, isRetry = false)
   }
   if (_token) headers['Authorization'] = `Bearer ${_token}`
 
-  const res = await fetch(`${BASE}${path}`, { ...options, headers })
+  const method = options.method || 'GET'
+  const res = await fetchWithRetry(`${BASE}${path}`, { ...options, headers }, method)
 
   if (res.status === 401 && !isRetry && path !== '/auth/refresh') {
     const refreshed = await tryRefresh()

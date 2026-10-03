@@ -1,11 +1,11 @@
+from __future__ import annotations
+
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import joblib
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
-from sklearn.multiclass import OneVsRestClassifier
+if TYPE_CHECKING:
+    from sklearn.multiclass import OneVsRestClassifier
 
 GOEMOTIONS = [
     "admiration",
@@ -73,6 +73,8 @@ MODEL_PATH = Path(__file__).parent / "emotion_model.pkl"
 
 
 def _generate_training_data() -> tuple[list[str], list[list[int]]]:
+    import numpy as np
+
     texts: list[str] = []
     labels: list[list[int]] = []
 
@@ -444,6 +446,11 @@ def _generate_training_data() -> tuple[list[str], list[list[int]]]:
 
 
 def _build_model() -> OneVsRestClassifier:
+    import numpy as np
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.multiclass import OneVsRestClassifier
+
     try:
         from datasets import load_dataset
 
@@ -483,6 +490,8 @@ def _build_model() -> OneVsRestClassifier:
 
 
 def train_and_save(path: str | Path = MODEL_PATH) -> None:
+    import joblib
+
     classifier, vectorizer = _build_model()
     joblib.dump({"classifier": classifier, "vectorizer": vectorizer, "emotions": GOEMOTIONS}, path)
     print(f"Model saved to {path}")
@@ -490,11 +499,13 @@ def train_and_save(path: str | Path = MODEL_PATH) -> None:
 
 class EmotionClassifier:
     def __init__(self, path: str | Path = MODEL_PATH):
+        import joblib
+
         if not os.path.exists(path):
             train_and_save(path)
         data = joblib.load(path)
-        self.classifier: OneVsRestClassifier = data["classifier"]
-        self.vectorizer: TfidfVectorizer = data["vectorizer"]
+        self.classifier = data["classifier"]
+        self.vectorizer = data["vectorizer"]
         self.emotions: list[str] = data["emotions"]
 
     def predict_proba(self, text: str) -> dict[str, float]:
@@ -518,4 +529,21 @@ class EmotionClassifier:
         return [e for e, p in self.predict_top(text, threshold=threshold)]
 
 
-classifier = EmotionClassifier()
+class _LazyClassifier:
+    """Lazy module-level singleton so `from app.ml.emotion_classifier import
+    classifier` stays source-compatible but never loads sklearn/joblib (or the
+    model) eagerly at import time. Everyone keeps using `classifier.predict_*`."""
+
+    def __init__(self) -> None:
+        self._inner: EmotionClassifier | None = None
+
+    def _get(self) -> EmotionClassifier:
+        if self._inner is None:
+            self._inner = EmotionClassifier()
+        return self._inner
+
+    def __getattr__(self, name: str):
+        return getattr(self._get(), name)
+
+
+classifier = _LazyClassifier()

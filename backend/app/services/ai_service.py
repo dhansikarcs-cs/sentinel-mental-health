@@ -19,7 +19,20 @@ _ollama_breaker_until = 0.0
 OLLAMA_BREAKER_THRESHOLD = 2
 OLLAMA_BREAKER_COOLDOWN = 30.0
 
-_emotion_clf = EmotionClassifier()
+_emotion_clf_lock = Lock()
+_emotion_clf: EmotionClassifier | None = None
+
+
+def _get_emotion_clf() -> EmotionClassifier:
+    """Lazily build the sklearn classifier on first use so cold starts (and
+    /health) stay fast — the model + libs are only loaded when actually needed."""
+    global _emotion_clf
+    if _emotion_clf is None:
+        with _emotion_clf_lock:
+            if _emotion_clf is None:
+                _emotion_clf = EmotionClassifier()
+    return _emotion_clf
+
 
 CLINICAL_JOURNAL_SUMMARY_PROMPT_V1 = (
     "You are Sentinel, a clinical documentation AI. Read this journal entry "
@@ -393,7 +406,7 @@ def _is_raw_echo(output: str, original: str) -> bool:
 
 
 def classify_emotions(text: str) -> str:
-    top = _emotion_clf.predict_top(text, threshold=0.15)
+    top = _get_emotion_clf().predict_top(text, threshold=0.15)
     labels = [e for e, p in top if e != "neutral"]
     if not labels:
         return ""
@@ -401,8 +414,9 @@ def classify_emotions(text: str) -> str:
 
 
 def classify_emotions_with_probs(text: str) -> tuple[list[tuple[str, float]], dict[str, float]]:
-    probs = _emotion_clf.predict_proba(text)
-    top = _emotion_clf.predict_top(text, threshold=0.15)
+    clf = _get_emotion_clf()
+    probs = clf.predict_proba(text)
+    top = clf.predict_top(text, threshold=0.15)
     return top, probs
 
 
