@@ -14,6 +14,25 @@ EMOTION_CLASSIFIER_VERSION = "1.0.0"
 RISK_ENGINE_VERSION = "1.0.0"
 
 
+def _broadcast_psych(event_type: str, payload: dict) -> None:
+    """Fire a websocket broadcast from a non-async background thread.
+
+    The worker runs inside FastAPI's threadpool (no running event loop), so
+    ``asyncio.get_event_loop()`` raises. Schedule onto the server's main loop
+    instead; broadcast is best-effort and must never roll back the DB commit.
+    """
+    from app.services.websocket_manager import manager
+
+    try:
+        loop = manager._loop
+        if loop is None or loop.is_closed():
+            logger.warning("WebSocket loop unavailable — skipping %s broadcast", event_type)
+            return
+        asyncio.run_coroutine_threadsafe(manager.broadcast_to_psych(event_type, payload), loop)
+    except Exception as e:
+        logger.warning("WebSocket broadcast %s failed: %s", event_type, e)
+
+
 def analyze_journal_background(journal_id: int, raw_content: str, patient_username: str) -> None:
     logger.info("Background AI analysis started for journal %s", journal_id)
     now = datetime.now(UTC).isoformat()
@@ -214,38 +233,28 @@ def analyze_journal_background(journal_id: int, raw_content: str, patient_userna
                 )
                 db.add(notif_psych)
 
-                from app.services.websocket_manager import manager
-
-                loop = asyncio.get_event_loop()
-                loop.create_task(
-                    manager.broadcast_to_psych(
-                        "crisis_alert",
-                        {
-                            "patient": patient_username,
-                            "risk_score": risk_score,
-                            "message": CRISIS_POLICY.auto_trigger_alert.format(
-                                patient=patient_username, risk_score=risk_score
-                            ),
-                            "timestamp": datetime.now(UTC).isoformat(),
-                        },
-                    )
-                )
-        elif CRISIS_POLICY.should_warn(risk_score):
-            from app.services.websocket_manager import manager
-
-            loop = asyncio.get_event_loop()
-            loop.create_task(
-                manager.broadcast_to_psych(
-                    "risk_warning",
+                _broadcast_psych(
+                    "crisis_alert",
                     {
                         "patient": patient_username,
                         "risk_score": risk_score,
-                        "message": CRISIS_POLICY.risk_warning_alert.format(
+                        "message": CRISIS_POLICY.auto_trigger_alert.format(
                             patient=patient_username, risk_score=risk_score
                         ),
                         "timestamp": datetime.now(UTC).isoformat(),
                     },
                 )
+        elif CRISIS_POLICY.should_warn(risk_score):
+            _broadcast_psych(
+                "risk_warning",
+                {
+                    "patient": patient_username,
+                    "risk_score": risk_score,
+                    "message": CRISIS_POLICY.risk_warning_alert.format(
+                        patient=patient_username, risk_score=risk_score
+                    ),
+                    "timestamp": datetime.now(UTC).isoformat(),
+                },
             )
 
         db.commit()

@@ -12,7 +12,7 @@ class AIAnalysis(Base):
         Index("ix_ai_priority", "priority"),
         Index("ix_ai_created_at", "created_at"),
         CheckConstraint("priority IN ('low', 'medium', 'high')", name="ck_ai_priority"),
-        CheckConstraint("provider IN ('rule', 'ollama', 'groq', 'pending')", name="ck_ai_provider"),
+        CheckConstraint("provider IN ('rule', 'ollama', 'groq', 'azure', 'pending')", name="ck_ai_provider"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)

@@ -86,10 +86,42 @@ def _ensure_columns():
                 logger.info("Added missing column %s.%s", table, col)
 
 
+def _ensure_ai_provider_constraint():
+    """Recreate ck_ai_provider to permit Azure once the constraint gained a provider.
+
+    The original constraint only allowed ('rule', 'ollama', 'groq', 'pending'),
+    so any journal analyzed via Azure raised IntegrityError on insert even though
+    the summary itself was saved. Recreate it including 'azure' on existing DBs.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    try:
+        check_constraints = inspector.get_check_constraints("ai_analyses")
+    except Exception:
+        return  # SQLite/older drivers: table or query may not be available
+    ck = next((c for c in check_constraints if c.get("name") == "ck_ai_provider"), None)
+    if ck is None:
+        return
+    sqltext = (ck.get("sqltext") or "").lower()
+    if "azure" in sqltext:
+        return
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE ai_analyses DROP CONSTRAINT ck_ai_provider'))
+        conn.execute(
+            text(
+                "ALTER TABLE ai_analyses ADD CONSTRAINT ck_ai_provider "
+                "CHECK (provider IN ('rule', 'ollama', 'groq', 'azure', 'pending'))"
+            )
+        )
+    logger.info("Recreated ck_ai_provider to allow provider='azure'")
+
+
 def _init_db():
     os.makedirs("data", exist_ok=True)
     Base.metadata.create_all(bind=engine)
     _ensure_columns()
+    _ensure_ai_provider_constraint()
 
 
 @asynccontextmanager
