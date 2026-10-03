@@ -64,9 +64,10 @@ FRIENDLY_JOURNAL_SUMMARY_PROMPT_V1 = (
 )
 CRISIS_SAFETY_GUIDANCE = (
     "Because this entry contains explicit self-harm or suicidal language, "
-    "keep exactly this supportive tone and end with a gentle safety note: "
-    "if you're in danger, please reach out to emergency services or a crisis "
-    "line right now (U.S./Canada: call or text 988). "
+    "your very last sentence MUST be exactly (with no changes): "
+    '"If you are in danger right now, please reach out to emergency services '
+    'or a crisis line immediately (U.S./Canada: call or text 988)." '
+    "Keep the sentences before that supportive and non-clinical. "
 )
 NO_CRISIS_GUIDANCE = "Do not mention crisis lines, hotlines, or emergency services — this entry does not warrant it. "
 NOTE_SYNTHESIS_PROMPT_V1 = (
