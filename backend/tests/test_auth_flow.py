@@ -291,6 +291,7 @@ def test_no_lockout_in_demo_mode(client, make_user):
 def test_role_gating_materializes_psychologist(client, make_user):
     patient = make_user(role="patient")
     psych = make_user(role="psychologist")
+    assigned_patient = make_user(role="patient", assigned_psych=psych["username"])
     patient_headers = {"Authorization": f"Bearer {patient['access_token']}"}
     psych_headers = {"Authorization": f"Bearer {psych['access_token']}"}
 
@@ -300,7 +301,12 @@ def test_role_gating_materializes_psychologist(client, make_user):
     resp = client.get(f"/api/journal/{psych['username']}", headers=patient_headers)
     assert resp.status_code == 403
 
+    # An unrelated psych (not this patient's assigned clinician) is denied.
     resp = client.get(f"/api/journal/{patient['username']}", headers=psych_headers)
+    assert resp.status_code == 403
+
+    # The assigned clinician may read the patient's data.
+    resp = client.get(f"/api/journal/{assigned_patient['username']}", headers=psych_headers)
     assert resp.status_code == 200
 
 

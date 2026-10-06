@@ -87,6 +87,7 @@ def analyze_journal_background(journal_id: int, raw_content: str, patient_userna
     from app.models.journal import JournalEntry
     from app.models.notification import Notification
     from app.models.risk_assessment import RiskAssessment
+    from app.models.user import User
 
     db = SessionLocal()
     try:
@@ -221,8 +222,15 @@ def analyze_journal_background(journal_id: int, raw_content: str, patient_userna
                     details=CRISIS_POLICY.crisis_log_details.format(risk_score=risk_score),
                 )
                 db.add(log)
+                psych_username = ""
+                patient_row = (
+                    db.query(User).filter(User.username == patient_username, User.deleted_at.is_(None)).first()
+                )
+                if patient_row:
+                    psych_username = patient_row.assigned_psych or ""
                 notif_psych = Notification(
                     patient_username=patient_username,
+                    recipient_username=psych_username or None,
                     title="CRITICAL: Auto-Crisis Triggered",
                     message=CRISIS_POLICY.auto_trigger_message.format(
                         risk_score=risk_score, journal_id=journal_id, delay=CRISIS_POLICY.trusted_contact_delay_seconds

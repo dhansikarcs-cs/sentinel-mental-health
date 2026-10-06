@@ -249,6 +249,9 @@ def get_patient_journals(
     user: User = Depends(require_role("psychologist")),
     db: Session = Depends(get_db),
 ):
+    from app.core.rbac import ensure_can_access_patient
+
+    ensure_can_access_patient(username, user, db)
     repo = JournalRepository(db)
     journals = repo.get_by_patient(
         username,
@@ -265,6 +268,9 @@ def get_patient_journals(
 def get_patient_summaries(
     username: str, user: User = Depends(require_role("psychologist")), db: Session = Depends(get_db)
 ):
+    from app.core.rbac import ensure_can_access_patient
+
+    ensure_can_access_patient(username, user, db)
     repo = JournalRepository(db)
     entries = repo.get_recent_summaries(username, limit=20)
     get_event_bus().emit("journal:summaries_viewed", viewer_username=user.username, patient_username=username)
@@ -293,8 +299,19 @@ def resummarize_journal(
     journal = repo.get_by_id(journal_id)
     if not journal:
         raise err(404, ErrorCode.JOURNAL_NOT_FOUND, "Journal not found")
-    if journal.patient_username != user.username and user.role != "psychologist":
-        raise err(403, ErrorCode.OWNER_ONLY, "Not authorized")
+    from app.core.rbac import ensure_can_access_patient
+
+    ensure_can_access_patient(journal.patient_username, user, db)
+
+    # Re-summarizing is idempotent: drop prior analysis rows so reruns never
+    # accumulate duplicate emotion/analysis/risk records (or re-fire crisis logs).
+    from app.models.ai_analysis import AIAnalysis
+    from app.models.emotion_result import EmotionResult
+    from app.models.risk_assessment import RiskAssessment
+
+    for model in (RiskAssessment, AIAnalysis, EmotionResult):
+        db.query(model).filter(model.journal_id == journal_id).delete(synchronize_session=False)
+    db.commit()
 
     background_tasks.add_task(
         analyze_journal_background,
@@ -311,8 +328,9 @@ def delete_journal(journal_id: int, user: User = Depends(get_current_user), db: 
     journal = repo.get_by_id(journal_id)
     if not journal:
         raise err(404, ErrorCode.JOURNAL_NOT_FOUND, "Journal not found")
-    if journal.patient_username != user.username and user.role != "psychologist":
-        raise err(403, ErrorCode.OWNER_ONLY, "Not authorized")
+    from app.core.rbac import ensure_can_access_patient
+
+    ensure_can_access_patient(journal.patient_username, user, db)
     repo.soft_delete(journal_id, deleted_by=user.username)
     return ok(message="Journal deleted")
 

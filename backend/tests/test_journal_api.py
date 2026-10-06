@@ -74,9 +74,14 @@ def test_idempotent_submission_returns_same_journal(client, make_user, db_sessio
 
 
 def test_psychologist_can_read_patient_journals_and_summaries(client, make_user):
-    patient = make_user(role="patient")
     psych = make_user(role="psychologist")
+    patient = make_user(role="patient", assigned_psych=psych["username"])
     client.post("/api/journal", json={"raw_content": _text()}, headers=_auth(patient["access_token"]))
+
+    # An unassigned clinician cannot read the patient's journals.
+    other = make_user(role="psychologist")
+    denied = client.get(f"/api/journal/{patient['username']}", headers=_auth(other["access_token"]))
+    assert denied.status_code == 403
 
     journals = client.get(f"/api/journal/{patient['username']}", headers=_auth(psych["access_token"]))
     assert journals.status_code == 200

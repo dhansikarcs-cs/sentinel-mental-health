@@ -14,7 +14,7 @@ from app.core.dependencies import get_current_user, require_role
 from app.core.input_validator import validate_file_upload
 from app.core.location import user_timezone
 from app.core.password_validator import PasswordPolicy
-from app.core.rbac import owns_or_psych as _owns_or_psych
+from app.core.rbac import can_access_patient as _can_access_patient
 from app.core.security import hash_password
 from app.core.structured_errors import ErrorCode, err
 from app.events import get_event_bus
@@ -89,7 +89,7 @@ def get_patient_profile(username: str, user: User = Depends(get_current_user), d
 
 @router.get("/{username}/summary")
 def get_patient_summary(username: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not _owns_or_psych(username, user):
+    if not _can_access_patient(username, user, db):
         raise err(status.HTTP_403_FORBIDDEN, ErrorCode.FORBIDDEN, "Access denied")
     journal_repo = JournalRepository(db)
     journals = journal_repo.get_by_patient(username, limit=10)
@@ -343,7 +343,7 @@ def get_patient_overview(username: str, user: User = Depends(get_current_user), 
     if not patient:
         raise err(404, ErrorCode.PATIENT_NOT_FOUND, "Patient not found")
 
-    if not _owns_or_psych(username, user):
+    if not _can_access_patient(username, user, db):
         raise err(status.HTTP_403_FORBIDDEN, ErrorCode.FORBIDDEN, "Access denied")
 
     ctx = recent_patient_context(db, username, journal_limit=10, mood_limit=14, ring_limit=7, include_followups=True)
@@ -514,7 +514,7 @@ def get_plain_insights(username: str, user: User = Depends(get_current_user), db
     patient = PatientRepository(db).get_by_username(username)
     if not patient:
         raise err(404, ErrorCode.PATIENT_NOT_FOUND, "Patient not found")
-    if not _owns_or_psych(username, user):
+    if not _can_access_patient(username, user, db):
         raise err(status.HTTP_403_FORBIDDEN, ErrorCode.FORBIDDEN, "Access denied")
 
     ctx = recent_patient_context(db, username, journal_limit=10, mood_limit=14, ring_limit=7, include_followups=True)

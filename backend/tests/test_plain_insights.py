@@ -22,7 +22,7 @@ def _seed_patient(client, psych, patient):
 
 def test_plain_insights_structure_and_rule_fallback(client, make_user):
     psych = make_user(role="psychologist")
-    patient = make_user(role="patient")
+    patient = make_user(role="patient", assigned_psych=psych["username"])
     _seed_patient(client, psych, patient)
 
     resp = client.get(f"/api/patients/{patient['username']}/plain-insights", headers=_auth(psych["access_token"]))
@@ -40,7 +40,7 @@ def test_plain_insights_ai_when_model_available(client, make_user, monkeypatch):
     from app.services import plain_insights
 
     psych = make_user(role="psychologist")
-    patient = make_user(role="patient")
+    patient = make_user(role="patient", assigned_psych=psych["username"])
     _seed_patient(client, psych, patient)
 
     def _fake_ollama(prompt, timeout=20, prompt_version=""):

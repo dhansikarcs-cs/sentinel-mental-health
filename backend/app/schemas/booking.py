@@ -1,6 +1,29 @@
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _valid_booking_date(value: str) -> str:
+    if not value or len(value) != 10:
+        raise ValueError("date must be YYYY-MM-DD")
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("date must be a real calendar date (YYYY-MM-DD)") from None
+    if parsed.year < 1970 or parsed.year > 2100:
+        raise ValueError("date out of supported range")
+    return value
+
+
+def _valid_booking_time(value: str) -> str:
+    if not value:
+        raise ValueError("time is required")
+    try:
+        datetime.strptime(value, "%H:%M")
+    except ValueError:
+        raise ValueError("time must be HH:MM (24-hour)") from None
+    return value
 
 
 class BookingCreate(BaseModel):
@@ -12,6 +35,9 @@ class BookingCreate(BaseModel):
     members: str = Field(default="", max_length=200)
     contact: str = Field(default="", max_length=200)
     explanation: str = Field(default="", max_length=2000)
+
+    _date_valid = field_validator("date")(_valid_booking_date)
+    _time_valid = field_validator("time")(_valid_booking_time)
 
 
 class BookingResponse(BaseModel):
@@ -35,6 +61,9 @@ class BookingUpdate(BaseModel):
 class BookingReschedule(BaseModel):
     date: str
     time: str
+
+    _date_valid = field_validator("date")(_valid_booking_date)
+    _time_valid = field_validator("time")(_valid_booking_time)
 
 
 class AvailabilityCreate(BaseModel):

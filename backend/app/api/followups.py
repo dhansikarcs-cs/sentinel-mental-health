@@ -107,10 +107,12 @@ def update_followup(
     now = datetime.now(UTC).isoformat()
     grade_changed = False
     feedback_changed = False
-    if update.status:
+    if "status" in update.model_fields_set:
         task.status = update.status
         if update.status == "completed":
             task.completed_at = now
+        elif update.status in ("pending", "skipped"):
+            task.completed_at = ""
     if "grade" in update.model_fields_set and update.grade:
         if user.role == "psychologist" or update.grade == "none":
             if task.grade != update.grade:

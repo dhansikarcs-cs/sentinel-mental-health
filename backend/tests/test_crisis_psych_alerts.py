@@ -67,3 +67,32 @@ def test_other_psychs_are_not_notified(client, make_user, db_session):
 
     rows = db_session.query(Notification).all()
     assert all(n.recipient_username == psych_a["username"] for n in rows)
+
+
+def test_auto_detected_crisis_notifies_assigned_psych_not_patient(client, make_user, db_session):
+    from app.models.notification import Notification
+
+    psych = make_user(role="psychologist")
+    patient = make_user(role="patient", assigned_psych=psych["username"])
+
+    resp = client.post(
+        "/api/journal",
+        headers=_crisis_headers(patient["access_token"]),
+        json={"raw_content": "I can't take it anymore, I want to end my life"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    rows = db_session.query(Notification).order_by(Notification.id).all()
+    # The clinician alert ("CRITICAL: Auto-Crisis Triggered") must reach the
+    # assigned psychologist's inbox — it must NOT be dropped with no recipient
+    # nor routed to the patient.
+    clinician_alerts = [
+        n for n in rows if n.notification_type == "crisis" and n.recipient_username
+    ]
+    assert clinician_alerts, "auto-detected crisis must alert the assigned clinician"
+    assert all(
+        n.recipient_username == psych["username"] for n in clinician_alerts
+    ), "crisis clinician alert must route to the assigned psychogist"
+    assert all(
+        n.recipient_username != patient["username"] for n in rows
+    ), "crisis notifications must never be addressed to the patient"
