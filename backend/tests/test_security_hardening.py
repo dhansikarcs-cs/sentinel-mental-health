@@ -138,9 +138,7 @@ def test_peer_patient_cannot_read_other_patient_clinical_data(client, make_user,
 
     # psychologist still allowed (only the patient's assigned clinician)
     psych = make_user(role="psychologist")
-    db_session.query(User).filter(User.username == owner["username"]).update(
-        {"assigned_psych": psych["username"]}
-    )
+    db_session.query(User).filter(User.username == owner["username"]).update({"assigned_psych": psych["username"]})
     db_session.commit()
     unassigned_psych = make_user(role="psychologist")
     assert (

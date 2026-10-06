@@ -86,13 +86,11 @@ def test_auto_detected_crisis_notifies_assigned_psych_not_patient(client, make_u
     # The clinician alert ("CRITICAL: Auto-Crisis Triggered") must reach the
     # assigned psychologist's inbox — it must NOT be dropped with no recipient
     # nor routed to the patient.
-    clinician_alerts = [
-        n for n in rows if n.notification_type == "crisis" and n.recipient_username
-    ]
+    clinician_alerts = [n for n in rows if n.notification_type == "crisis" and n.recipient_username]
     assert clinician_alerts, "auto-detected crisis must alert the assigned clinician"
-    assert all(
-        n.recipient_username == psych["username"] for n in clinician_alerts
-    ), "crisis clinician alert must route to the assigned psychogist"
-    assert all(
-        n.recipient_username != patient["username"] for n in rows
-    ), "crisis notifications must never be addressed to the patient"
+    assert all(n.recipient_username == psych["username"] for n in clinician_alerts), (
+        "crisis clinician alert must route to the assigned psychogist"
+    )
+    assert all(n.recipient_username != patient["username"] for n in rows), (
+        "crisis notifications must never be addressed to the patient"
+    )
