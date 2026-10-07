@@ -122,21 +122,24 @@ def _active_state_for(db: Session, patient: str = "") -> CrisisState | None:
     Priority:
       1. An explicitly requested patient with an active crisis.
       2. The caller's own active crisis (patients see their own).
-      3. The single currently-active row (backward compatible when one
-         crisis is active and the caller is a psychologist without a row).
+      3. For staff, the MOST RECENT active crisis (so a stale zombie trigger
+         never shadows a patient's fresh one in the emergency center).
     """
     if patient:
         state = db.query(CrisisState).filter(CrisisState.patient_username == patient).first()
         if state and state.active:
             return state
         return state or _get_or_create_state(db, patient)
-    active = db.query(CrisisState).filter(CrisisState.active == 1).first()
+    # Staff see the MOST RECENT active crisis. The old "first active row" was
+    # nondeterministic: a stale zombie trigger (e.g. a long-abandoned admin
+    # demo row) could shadow a patient's fresh crisis in the emergency center.
+    active = db.query(CrisisState).filter(CrisisState.active == 1).order_by(CrisisState.triggered_at.desc()).first()
     return active if active else _get_or_create_state(db, "")
 
 
 @router.get("/state", response_model=CrisisStateResponse)
 def get_crisis_state(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    state = _active_state_for(db) if user.role == "psychologist" else _get_or_create_state(db, user.username)
+    state = _active_state_for(db) if user.role in ("psychologist", "admin") else _get_or_create_state(db, user.username)
     return CrisisStateResponse(
         active=bool(state.active),
         patient=state.patient_username or "",
@@ -185,7 +188,7 @@ def trigger_crisis(user: User = Depends(get_current_user), db: Session = Depends
 @router.post("/acknowledge")
 def acknowledge_crisis(
     patient: str = Query(""),
-    user: User = Depends(require_role("psychologist")),
+    user: User = Depends(require_role("psychologist", "admin")),
     db: Session = Depends(get_db),
 ):
     state = _active_state_for(db, patient)
@@ -529,7 +532,7 @@ def _handle_escalation(state: CrisisState, db: Session):
 
 @router.get("/elapsed")
 def crisis_elapsed(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    state = _active_state_for(db) if user.role == "psychologist" else _get_or_create_state(db, user.username)
+    state = _active_state_for(db) if user.role in ("psychologist", "admin") else _get_or_create_state(db, user.username)
     _handle_escalation(state, db)
     if not state.active or not state.triggered_at:
         return {"elapsed": 0, "stage": "inactive", "is_active": False}

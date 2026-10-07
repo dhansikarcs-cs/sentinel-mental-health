@@ -160,10 +160,13 @@ export default function CrisisPage() {
   const isAdmin = user?.role === 'admin'
   const active = cs.active
   const triggeredBy = cs.triggered_by || 'patient'
-  // Whose crisis is this, and is it mine? Patients only get cancel/notify
-  // controls on their OWN crisis — never on one they're viewing as staff.
+  // Whose crisis is this, and is it mine? Patients get cancel/notify controls
+  // on their OWN crisis — including auto-detected (ai_detection) ones, which
+  // previously rendered a full emergency UI with no way out. Only a
+  // staff-triggered crisis stays in the psychologist's hands.
   const crisisPatient = cs.patient || ''
   const isOwnCrisis = !isPsych && !isAdmin && crisisPatient === user?.username
+  const staffCanAct = isPsych || isAdmin
 
   const stage = computeCrisisStage(cs, elapsed)
   const terminal = stage === 'acknowledged'
@@ -377,15 +380,15 @@ export default function CrisisPage() {
           </div>
 
           <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {!cs.acknowledged && isPsych && (
+            {!cs.acknowledged && staffCanAct && (
               <button onClick={acknowledge} className="btn-primary" style={{ flex: 1, padding: '12px' }}>✓ Acknowledge crisis</button>
             )}
-            {isOwnCrisis && triggeredBy === 'patient' && (
+            {isOwnCrisis && triggeredBy !== 'psychologist' && (
               <button onClick={notifyTC} style={{ flex: 1, padding: '12px' }}>👤 Notify trusted contact + psychologist</button>
             )}
           </div>
 
-          {isOwnCrisis && triggeredBy === 'patient' && !terminal && (
+          {isOwnCrisis && triggeredBy !== 'psychologist' && !terminal && (
             confirming ? (
               <div className="card" style={{ borderColor: 'var(--warn)', background: 'var(--warn-soft)', padding: '14px' }}>
                 <div style={{ fontWeight: 700, marginBottom: '8px', color: 'var(--warn)' }}>Cancel this crisis?</div>
@@ -398,7 +401,7 @@ export default function CrisisPage() {
               <button onClick={handleCancel} style={{ padding: '10px' }}>✅ I&apos;m safe — cancel crisis</button>
             )
           )}
-          {isPsych && !terminal && (
+          {staffCanAct && !terminal && (
             <button onClick={handleResolve} disabled={cancelling} className="btn-primary" style={{ padding: '12px', background: 'var(--ok) !important', borderColor: 'var(--ok) !important' }}>
               {cancelling ? 'Resolving…' : '🗑 Resolve crisis'}
             </button>

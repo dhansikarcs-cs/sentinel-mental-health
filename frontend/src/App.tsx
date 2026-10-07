@@ -73,7 +73,7 @@ export default function App() {
         <Route path="/bookings" element={<BookingsPage />} />
         <Route path="/followups" element={<FollowupsPage />} />
         <Route path="/timeline" element={<RequireRole roles={['patient']}><TimelinePage /></RequireRole>} />
-        <Route path="/crisis" element={<RequireRole roles={['patient']}><CrisisPage /></RequireRole>} />
+        <Route path="/crisis" element={<RequireRole roles={['patient', 'psychologist', 'admin']}><CrisisPage /></RequireRole>} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/triage" element={<RequireRole roles={['psychologist']}><PsychTriagePage /></RequireRole>} />
         <Route path="/clinical-notes" element={<RequireRole roles={['psychologist']}><ClinicalNotesPage /></RequireRole>} />

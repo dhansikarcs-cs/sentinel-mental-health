@@ -70,3 +70,29 @@ def test_psychologist_can_still_resolve_any_crisis(client, patient_a, make_user)
 
     state = client.get("/api/crisis/state", headers=h_p).json()
     assert state["active"] is False
+
+
+def test_patient_can_cancel_auto_detected_crisis(client, patient_a, db_session):
+    """The patient's cancel button must work for AI-detected crises too.
+
+    Auto-detected crises set triggered_by='ai_detection' (not 'patient'), which
+    used to hide the "I'm safe — cancel crisis" control in the UI. The patient
+    was then locked inside an active crisis with no way out. Backend already
+    permits self-cancel; the regression guards that the state is cancellable.
+    """
+    from app.models.crisis import CrisisState
+
+    h = auth_headers(patient_a["access_token"])
+
+    crisis_text = "I want to die, nobody can help me, end my life"
+    client.post("/api/journal", json={"raw_content": crisis_text}, headers=h)
+
+    state = db_session.query(CrisisState).filter(CrisisState.patient_username == patient_a["username"]).first()
+    assert state is not None and state.active == 1
+    assert state.triggered_by == "ai_detection", "auto-detected crisis must be tagged ai_detection"
+
+    r = client.post("/api/crisis/resolve", headers=h)
+    assert r.status_code == 200, f"patient cancel of auto crisis failed: {r.status_code} {r.text[:200]}"
+
+    state = client.get("/api/crisis/state", headers=h).json()
+    assert state["active"] is False, "auto-detected crisis must be cancellable by the patient"
