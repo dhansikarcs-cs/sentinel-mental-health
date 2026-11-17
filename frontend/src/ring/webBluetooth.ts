@@ -61,6 +61,32 @@ interface BleBluetooth {
     optionalServices?: string[]
     acceptAllDevices?: boolean
   }): Promise<BleDevice>
+  getAvailability?(): Promise<boolean>
+}
+
+/** What the BROWSER (not the server) can tell us about Bluetooth. Web Bluetooth
+ *  is 100% client-side, so this is the only way to diagnose "not connecting".
+ *  Deliberately SYNCHRONOUS: requestDevice() needs transient user activation,
+ *  so we must not await anything between the click and the picker. */
+export interface BluetoothDiagnostics {
+  api: boolean
+  secure: boolean
+  adapter: string
+  isAndroid: boolean
+  isIOS: boolean
+  line: string
+}
+
+export function bluetoothDiagnostics(): BluetoothDiagnostics {
+  const nav = navigator as unknown as BleNavigator
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+  const isAndroid = /Android/i.test(ua)
+  const isIOS = /iPhone|iPad|iPod/i.test(ua)
+  const api = !!nav.bluetooth
+  const secure = typeof isSecureContext !== 'undefined' ? isSecureContext : location.protocol === 'https:'
+  const adapter = api ? 'present' : 'missing'
+  const line = `Bluetooth API: ${api ? 'yes' : 'NO'} · secure(HTTPS): ${secure ? 'yes' : 'NO'} · ${isAndroid ? 'Android' : isIOS ? 'iOS' : 'desktop'}${isAndroid ? ' — needs Location ON + "Nearby devices" permission' : ''}${isIOS && !api ? ' — iOS has NO Web Bluetooth; use Chrome/Edge on desktop/Android.' : ''}`
+  return { api, secure, adapter, isAndroid, isIOS, line }
 }
 interface BleNavigator {
   bluetooth?: BleBluetooth
@@ -151,15 +177,24 @@ export async function startLiveHrStream(
   const bluetooth = (navigator as unknown as BleNavigator).bluetooth
   if (!bluetooth) throw new Error('Web Bluetooth unavailable. Use Chrome/Edge on HTTPS or localhost.')
 
-  // Advertised name is not stable: "R30 PRO F085", " F085", "R30PRO".
-  // Filters are OR'd; the standard Heart Rate service guarantees it appears.
+  // acceptAllDevices makes the picker list EVERY nearby BLE device, so the
+  // ring cannot be hidden by an unstable advertised name ("R30 PRO F085" /
+  // " F085" / "R30PRO") or a missing service advertisement. The patient picks
+  // the "R30 PRO" entry. If the picker is empty, that is an OS permission /
+  // adapter problem, surfaced by bluetoothDiagnostics(). No guessed commands.
   const device = await bluetooth.requestDevice({
-    filters: [{ namePrefix: 'R30 PRO' }, { namePrefix: 'F085' }, { services: ['heart_rate'] }],
+    acceptAllDevices: true,
     optionalServices: OPTIONAL_SERVICES,
   })
   if (!device.gatt) throw new Error('Device has no GATT server')
   const server = await device.gatt.connect()
-  const service = await server.getPrimaryService(YCBT_SERVICE)
+  let service: BleService
+  try {
+    service = await server.getPrimaryService(YCBT_SERVICE)
+  } catch {
+    try { server.disconnect() } catch { /* already gone */ }
+    throw new Error('That device is not the ring — pick the "R30 PRO" entry.')
+  }
   const cmd = await service.getCharacteristic(CMD_CHAR)
   const stream = await service.getCharacteristic(STREAM_CHAR)
 

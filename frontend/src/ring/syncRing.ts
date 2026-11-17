@@ -8,7 +8,7 @@
  * measure is left out of the payload entirely and stays NULL in the database.
  */
 
-import { connectAndSync, startLiveHrStream, type ConnectResult } from './webBluetooth'
+import { connectAndSync, startLiveHrStream, bluetoothDiagnostics, type ConnectResult, type BluetoothDiagnostics } from './webBluetooth'
 import { enqueueRing, flushRingQueue, type RingQueueKind } from './ringQueue'
 
 export const DEVICE_ID = 'viaking_web_r30pro'
@@ -91,11 +91,12 @@ export interface LiveSyncState {
   lastBpm: number | null
   frames: number // raw BLE frames seen (diagnostic)
   opcodes: string[] // opcodes seen (diagnostic)
+  diag: string // browser/Bluetooth/permission diagnostic line
   error: string
 }
 
 let _session: { stop: () => Promise<void> } | null = null
-let _state: LiveSyncState = { running: false, count: 0, lastBpm: null, frames: 0, opcodes: [], error: '' }
+let _state: LiveSyncState = { running: false, count: 0, lastBpm: null, frames: 0, opcodes: [], diag: '', error: '' }
 const _subs = new Set<(s: LiveSyncState) => void>()
 
 function emit() { _subs.forEach((f) => f(_state)) }
@@ -110,7 +111,11 @@ export function getLiveSyncState(): LiveSyncState { return _state }
 
 export async function startLiveSync(): Promise<void> {
   if (_session) return
-  _state = { running: true, count: 0, lastBpm: null, frames: 0, opcodes: [], error: '' }
+  // Capture browser-side Bluetooth facts BEFORE the picker opens, so a failed
+  // attempt still leaves a diagnosable line on screen. SYNC: requestDevice()
+  // needs transient user activation, no await before it.
+  const d = bluetoothDiagnostics()
+  _state = { running: true, count: 0, lastBpm: null, frames: 0, opcodes: [], diag: d.line, error: '' }
   emit()
   let n = 0
   const seenOpcodes = new Set<string>()
@@ -139,7 +144,7 @@ export async function startLiveSync(): Promise<void> {
     )
     _session = { stop: session.stop }
   } catch (err) {
-    _state = { running: false, count: n, lastBpm: _state.lastBpm, frames: _state.frames, opcodes: Array.from(seenOpcodes).sort(), error: describeRingError(err) }
+    _state = { running: false, count: n, lastBpm: _state.lastBpm, frames: _state.frames, opcodes: Array.from(seenOpcodes).sort(), diag: _state.diag, error: describeRingError(err, d) }
     emit()
     throw err
   }
@@ -154,18 +159,31 @@ export async function stopLiveSync(): Promise<void> {
 }
 
 /** Turn a Web Bluetooth failure into something a patient can actually act on. */
-export function describeRingError(err: unknown): string {
+export function describeRingError(err: unknown, d?: BluetoothDiagnostics | null): string {
   const e = err as { name?: string; message?: string } | undefined
   const name = e?.name || ''
   const raw = (e?.message || String(err)).toLowerCase()
 
+  // Permission / blocked cases first — these are the "not connecting at all"
+  // ones, and they need OS-level instructions, not "bring it closer".
+  if (name === 'NotAllowedError' || /permission|denied|not allowed|blocked/i.test(raw)) {
+    if (d?.isIOS) return 'iPhone/iPad has no Web Bluetooth. Use Chrome or Edge on a Windows/Mac/Android device.'
+    if (d?.isAndroid) return 'Bluetooth permission was denied. On Android: Settings → Apps → Chrome → Permissions → allow "Nearby devices", turn Location ON, then reload and try again.'
+    return 'Bluetooth permission was denied. Allow Bluetooth for this site in the browser’s site settings, then reload.'
+  }
+  if (name === 'SecurityError') {
+    return d?.secure
+      ? 'Bluetooth was blocked by the browser/OS. Allow Bluetooth for this site.'
+      : 'Bluetooth needs a secure (HTTPS) page. Open https://sentinelpsytech.com.'
+  }
+
   switch (name) {
     case 'NotFoundError':
-      return 'No ring selected — the picker was closed, or no ring was advertising nearby.'
+      return 'No device chosen. In the picker, select the "R30 PRO" entry. If the list is empty: turn Bluetooth ON, keep the ring out of its case and within ~10 m.'
     case 'NotSupportedError':
-      return 'Bluetooth is not supported on this browser/device. Use Chrome or Edge.'
-    case 'SecurityError':
-      return 'Bluetooth was blocked. Open Sentinel over HTTPS (or localhost).'
+      return d?.isIOS
+        ? 'iOS Safari has no Web Bluetooth — use Chrome or Edge on a computer/Android.'
+        : 'Bluetooth is not supported here. Use Chrome or Edge over HTTPS.'
     case 'NetworkError':
       return "Couldn't reach the ring — is it charged, out of its case, and within ~10 m?"
     case 'InvalidStateError':
@@ -174,9 +192,9 @@ export function describeRingError(err: unknown): string {
       break
   }
   if (/no device|not found|cancel/.test(raw)) {
-    return 'No ring selected — the picker was closed, or none was found nearby.'
+    return 'No device chosen — select the "R30 PRO" entry in the picker (turn Bluetooth ON first).'
   }
-  if (/no gatt/.test(raw)) return 'That device is not the ring — pick the "R30 PRO" entry.'
+  if (/no gatt|not the ring/.test(raw)) return 'That device is not the ring — pick the "R30 PRO" entry.'
   if (/gatt|disconnect|connect/.test(raw)) {
     return "Couldn't stay connected to the ring — bring it closer and retry."
   }

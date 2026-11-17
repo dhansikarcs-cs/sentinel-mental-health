@@ -102,6 +102,11 @@ export default function RingConnect({ onSynced }: { onSynced?: () => void }) {
       {live.error && !live.running && (
         <div style={{ marginTop: '10px', fontSize: '0.72rem', lineHeight: 1.5, color: 'var(--danger)' }}>{live.error}</div>
       )}
+      {live.diag && (
+        <div style={{ marginTop: '10px', fontSize: '0.66rem', lineHeight: 1.5, color: 'var(--faint)', wordBreak: 'break-word' }}>
+          🔎 {live.diag}
+        </div>
+      )}
       {pending > 0 && (
         <div style={{ marginTop: '10px', fontSize: '0.7rem', color: 'var(--warn)' }}>
           📡 {pending} measurement{pending === 1 ? '' : 's'} waiting to upload — retrying automatically.
@@ -109,7 +114,7 @@ export default function RingConnect({ onSynced }: { onSynced?: () => void }) {
       )}
       {!supported && (
         <div style={{ marginTop: '10px', fontSize: '0.7rem', color: 'var(--warn)', lineHeight: 1.5 }}>
-          This browser can't use Bluetooth. Open Sentinel in Chrome or Edge over HTTPS (or localhost), with the ring nearby. Safari and Firefox do not support Web Bluetooth.
+          This browser can't use Bluetooth. Open Sentinel in Chrome or Edge over HTTPS (or localhost), with the ring nearby. Safari, Firefox and iOS have no Web Bluetooth. Android needs Location ON + "Nearby devices" permission for Chrome. In the picker choose the "R30 PRO" entry.
         </div>
       )}
       <div style={{ marginTop: '10px', fontSize: '0.66rem', color: 'var(--faint)', lineHeight: 1.5 }}>
