@@ -43,7 +43,7 @@ cross-origin and CORS is irrelevant in production. The proxy keeps the `/api/` p
 strip (backend routes are `/api/...`) and forwards `Upgrade`/`Connection` headers for
 WebSocket/SSE endpoints.
 
-Set `BACKEND_URL` to `https://sentinel-backend.onrender.com` (public) or the internal
+Set `BACKEND_URL` to `https://sentinelpsytech.com` (public) or the internal
 `http://sentinel-backend:10000` (same-account, faster).
 
 ## Environment variables (backend)

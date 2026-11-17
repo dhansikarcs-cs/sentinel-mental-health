@@ -1,0 +1,3 @@
+# Sentinel R30 PRO BLE lab (native Windows Python 3.11+, NOT WSL2)
+bleak>=3.0,<4
+requests>=2.31

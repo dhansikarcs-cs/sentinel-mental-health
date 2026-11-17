@@ -13,6 +13,9 @@ from reportlab.lib.enums import TA_JUSTIFY
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.pdfmetrics import registerFontFamily
 from reportlab.platypus import (
     PageBreak,
     Paragraph,
@@ -21,6 +24,21 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+
+FONT_DIR = r"C:\Windows\Fonts"
+
+
+def register_fonts():
+    pdfmetrics.registerFont(TTFont("Sentinel", f"{FONT_DIR}\\segoeui.ttf"))
+    pdfmetrics.registerFont(TTFont("Sentinel-Bold", f"{FONT_DIR}\\segoeuib.ttf"))
+    pdfmetrics.registerFont(TTFont("Sentinel-Italic", f"{FONT_DIR}\\segoeuii.ttf"))
+    registerFontFamily(
+        "Sentinel",
+        normal="Sentinel",
+        bold="Sentinel-Bold",
+        italic="Sentinel-Italic",
+        boldItalic="Sentinel-Bold",
+    )
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "docs" / "sentinel_paper.md"
@@ -45,9 +63,9 @@ def build_styles():
     title = ParagraphStyle(
         "SentinelTitle",
         parent=styles["Title"],
-        fontName="Helvetica-Bold",
+        fontName="Sentinel-Bold",
         fontSize=17,
-        leading=21,
+        leading=22,
         alignment=1,
         textColor=colors.HexColor("#1a232e"),
         spaceAfter=6,
@@ -55,16 +73,16 @@ def build_styles():
     subtitle = ParagraphStyle(
         "SentinelSubtitle",
         parent=styles["Normal"],
-        fontName="Helvetica-Oblique",
+        fontName="Sentinel",
         fontSize=10.5,
-        leading=14,
+        leading=15,
         alignment=1,
         textColor=colors.HexColor("#444444"),
     )
     h1 = ParagraphStyle(
         "SentinelH1",
         parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
+        fontName="Sentinel-Bold",
         fontSize=12.5,
         leading=15,
         spaceBefore=16,
@@ -74,7 +92,7 @@ def build_styles():
     h2 = ParagraphStyle(
         "SentinelH2",
         parent=styles["Heading3"],
-        fontName="Helvetica-Bold",
+        fontName="Sentinel-Bold",
         fontSize=10.5,
         leading=13,
         spaceBefore=10,
@@ -84,7 +102,7 @@ def build_styles():
     body = ParagraphStyle(
         "SentinelBody",
         parent=styles["BodyText"],
-        fontName="Helvetica",
+        fontName="Sentinel",
         fontSize=9.2,
         leading=12.6,
         alignment=TA_JUSTIFY,
@@ -101,7 +119,7 @@ def build_styles():
     quote = ParagraphStyle(
         "SentinelQuote",
         parent=body,
-        fontName="Helvetica-Oblique",
+        fontName="Sentinel-Italic",
         leftIndent=16,
         textColor=colors.HexColor("#333333"),
     )
@@ -136,23 +154,29 @@ def main():
     def add_paragraph(text, style_name="body"):
         story.append(Paragraph(inline(text), styles[style_name]))
 
-    # Title page: consume up to the first blank line after metadata.
+    register_fonts()
+
+    # Title page: consume metadata until a blank line after the title.
     i = 0
     assert lines[i].startswith("# "), "expected title line"
     title_text = lines[i][2:].strip()
     i += 1
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i < len(lines) and lines[i].startswith("---"):
+        i += 1
+        while i < len(lines) and not lines[i].strip():
+            i += 1
     meta = []
     while i < len(lines) and lines[i].strip() and not lines[i].startswith("---"):
         meta.append(lines[i].strip())
         i += 1
-    story.append(Spacer(1, 2.5 * cm))
+    story.append(Spacer(1, 3 * cm))
     story.append(Paragraph(title_text, styles["title"]))
+    story.append(Spacer(1, 8))
     for m in meta:
-        story.append(Paragraph(m, styles["subtitle"]))
-    story.append(Spacer(1, 1.2 * cm))
+        story.append(Paragraph(inline(m), styles["subtitle"]))
     story.append(PageBreak())
-    if i < len(lines) and lines[i].startswith("---"):
-        i += 1
 
     table_start = None
 
@@ -169,7 +193,7 @@ def main():
             TableStyle(
                 [
                     ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e8f1ec")),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTNAME", (0, 0), (-1, 0), "Sentinel-Bold"),
                     ("FONTSIZE", (0, 0), (-1, -1), 8),
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#123a2e")),
                     ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#9ab3a8")),
@@ -213,6 +237,9 @@ def main():
             name = stripped[3:].strip()
             story.append(Paragraph(inline(name), styles["h1"]))
             continue
+        if stripped.startswith("#### "):
+            story.append(Paragraph(inline(stripped[5:].strip()), styles["h2"]))
+            continue
         if stripped.startswith("### "):
             story.append(Paragraph(inline(stripped[4:].strip()), styles["h2"]))
             continue
@@ -229,9 +256,9 @@ def main():
     doc = SimpleDocTemplate(
         str(OUT),
         pagesize=A4,
-        title="Sentinel: An On-Premises Psychophysiological Triage Node",
-        author="Sentinel Engineering Team",
-        subject="Biomedical Engineering, 2026",
+        title="Sentinel: An On-Premises Software Platform for Continuous Psychophysiological Triage",
+        author="Dhansika.R",
+        subject="Reliability Under Distribution Shift and Physiological Context",
         leftMargin=1.9 * cm,
         rightMargin=1.9 * cm,
         topMargin=1.6 * cm,
@@ -240,12 +267,12 @@ def main():
 
     def footer(canvas, docobj):
         canvas.saveState()
-        canvas.setFont("Helvetica", 7.5)
+        canvas.setFont("Sentinel", 7.5)
         canvas.setFillColor(colors.HexColor("#666666"))
         canvas.drawCentredString(
             A4[0] / 2,
             0.9 * cm,
-            "Sentinel — On-Premises Psychophysiological Triage Node",
+            "Sentinel — Reliability under distribution shift and physiological context",
         )
         canvas.drawRightString(A4[0] - 1.9 * cm, 0.9 * cm, str(docobj.page))
         canvas.restoreState()

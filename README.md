@@ -1,115 +1,74 @@
-# Sentinel — On-Premises Psychophysiological Triage Node
+# Sentinel
 
-**Continuous, clinician-in-the-loop mental health infrastructure: journal monitoring plus wearable physiology, AI-assisted summaries, crisis escalation, and structured follow-up — built for clinics that are short on psychiatrists.**
+**Live:** https://sentinelpsytech.com &nbsp;·&nbsp; **API docs:** https://sentinelpsytech.com/docs &nbsp;·&nbsp; **Health:** https://sentinelpsytech.com/health
 
-> **Stack:** FastAPI + SQLAlchemy (SQLite/PostgreSQL) · React 19 + TypeScript + Vite · local-first AI (Ollama) with hosted fallback · PWA · Docker Compose · GitHub Actions CI
-> **Status:** Working prototype · 222 tests (~72s) across 6 CI jobs · Hardware adapters built (BLE-GATT, vendor cloud, deterministic simulator) ·
+Sentinel is a mental-health support platform that pairs private journaling with an AI companion, real-time emotion scoring, and automatic crisis detection, all feeding a clinician triage and admin oversight layer that keeps sensitive AI work safe, auditable, and production-ready.
 
-> **Live demo:** https://sentinel-frontend-dhkcs.onrender.com · API docs: https://sentinel-backend-dhkcs.onrender.com/docs
-> **Origin:** this is the current, actively developed codebase. The original milestone prototype lives at `dhansikarcs-cs/Sentinel_V_1_` (hardware M0 ring SDK, original README/docs).
+> **Stack:** FastAPI + SQLAlchemy (SQLite) · React 19 + TypeScript + Vite · PWA · Docker Compose + Caddy (automatic HTTPS), deployed on our own VPS. AI keys are left as blank environment variables; the offline rule-based fallback works without them.
 
----
-
-## What Sentinel Does
-
-- **Continuous biometric ingestion** from smart rings (HR, HRV, stress, sleep) via a pluggable adapter SDK (`BLE` gateway, vendor cloud, or deterministic simulator)
-- **Journal analysis** with AI summaries — a warm companion tone for the patient, a structured OAP clinical summary for the psychologist
-- **Discrepancy engine** — rule-based, zero-ML, flags mismatches between subjective journal text and objective physiology (e.g. "I'm fine" alongside sustained high stress)
-- **Crisis engine** — deterministic escalation (patient → psychologist → trusted contact → helpline) that always waits for a human to decide, with an active-crisis WebSocket broadcast
-- **Clinical workspace** — triage, clinical notes, bookings, follow-ups, session reports, export center
-- **Security** — HttpOnly JWT + per-device ring tokens (SHA-256 at rest, constant-time compare), field-level encryption (Fernet, PBKDF2-600k + HKDF), hash-chained audit log, rate limiting
+> **Status:** 222 backend tests green · ruff lint/format clean · TypeScript + Vite build green · real Viaking R30 PRO wearable data only — no simulated physiology.
 
 ---
 
-## The AI: honest and local by design
+## Live links
 
-The AI layer is honest about where it is today. Our own model is still in training, so the live build runs on a hosted model with our prompt, guardrails, and safety rules wrapped around every output — always paraphrased, never quoting raw text or raw biometrics. The design stays local-first: the moment our tuned model is ready, it drops onto the clinic's own hardware and patient data never leaves the building.
+| | |
+|---|---|
+| App | https://sentinelpsytech.com |
+| Interactive API docs | https://sentinelpsytech.com/docs |
+| OpenAPI schema | https://sentinelpsytech.com/openapi.json |
+| Health check | https://sentinelpsytech.com/health |
 
-Beside it, a **28-class emotion classifier** (trained in-repo on 48,836 GoEmotions examples under a leak-free split) is already fully ours and runs on-premises. Every entry gets two views: a warm, motivating message for the patient and a structured OAP clinical summary for the psychologist.
-
-**Fallback chain:** hosted model → local model → deterministic rule fallback keeps the system alive when AI is unavailable. The discrepancy and crisis decisions never depend on the LLM.
+An earlier hosted demo has been retired. The links above are the single, current deployment.
 
 ---
 
-## Architecture
+## What Sentinel does
+
+- **Private journaling** with AI-assisted summaries — a warm companion tone for the patient, a structured clinical summary for the psychologist
+- **Emotion scoring** — an in-repo 28-class GoEmotions classifier, with a deterministic rule fallback when AI is unavailable
+- **Journal ↔ vitals comparison** — uses only stored journal text and genuinely measured wearable signals; reports `insufficient_data` instead of estimating
+- **Automatic crisis detection** with deterministic escalation and an active-crisis WebSocket broadcast
+- **Clinician workspace** — triage, clinical notes, bookings, follow-ups, session reports, export center
+- **Admin oversight** — RBAC, hash-chained audit log, rate limiting, per-device ring tokens
+- **Editable profile** — display name, clinic, occupation, password change with current-password verification
+
+---
+
+## Wearable data — real only
+
+The wearable is a **Viaking R30 PRO** (Yucheng YCBT protocol over Web Bluetooth).
+
+- This unit **does not retain stored history**. Readings are captured **live** from CRC-validated `06 01` frames, using only documented handshake and measurement start/stop opcodes. No DFU, reset, OTA, history deletes, or unknown writes; raw packets are preserved.
+- Capture requires **Chrome/Edge over HTTPS**, a user gesture, the ring within ~10 m, and **an open browser tab**. A hosted server has no Bluetooth, and a service worker / PWA cannot keep a BLE link alive in the background.
+- Only signals the ring actually measured are stored. Stress, sleep, SpO₂, HRV, temperature and blood pressure stay `NULL` (shown as dashes) when not measured. HRV is never derived from bpm, and no value is defaulted or invented.
+- Every reading is written to an IndexedDB queue **before** the network call, so closing a tab cannot lose a captured reading. Unattended 24/7 capture would require a dedicated always-on gateway device near the ring.
+- `hardware_lab/` contains **EXPERIMENTAL** protocol probes and raw packet captures. These measurements are unvalidated, are **not a clinical assessment**, and must not be used for clinical conclusions.
+
+---
+
+## Repository layout
 
 ```
-OEM ring ─┬─ BLE gateway (bleak) ──┐
-          ├─ vendor cloud SDK ─────┤→ RingSource adapters → SensorData → POST /ring/data
-          └─ simulated (dev/test)  ┘                                    │
-                                                    get_ring_identity (device token)
-                                                                        ↓
-Frontend (PWA) ── Nginx ── FastAPI API ── SQLite/PostgreSQL
-                       │        └─ AI: hosted (today) → Ollama (local) → rule fallback
-                       └─ WebSocket (crisis broadcast)
-```
-
-```
-sentinel3/
-├── backend/
-│   ├── app/
-│   │   ├── main.py                    # FastAPI entry point, middleware, routers
-│   │   ├── api/                       # Routers: auth, journal, crisis, ring, triage, ...
-│   │   ├── core/                      # Config, DB, security, rate limiting, dependencies
-│   │   ├── models/                    # SQLAlchemy models (users, journal, ring_device, ...)
-│   │   ├── schemas/                   # Pydantic request/response schemas
-│   │   ├── services/                  # audit, websocket, search, plain insights
-│   │   │   └── ring/                  # RingSource SDK: base, simulated, ble_gatt, vendor_api
-│   │   ├── ml/                        # emotion_classifier, risk_engine, model_registry
-│   │   ├── events/                    # Event subscribers (audit trail, event store)
-│   │   ├── workers/                   # AI worker, reminder/celebration schedulers
-│   │   └── repositories/              # Data-access layer
-│   ├── benchmarks/                    # IRIS-style benchmark suite
-│   ├── alembic/                       # DB migrations
-│   ├── tests/                         # 222 tests across 6 CI jobs
-│   └── requirements*.txt
-├── frontend/                          # React 19 + TypeScript + Vite + Tailwind (PWA)
-│   └── src/{api,components,lib,pages,stores}
-├── scripts/                           # ring_bridge, sim_ring, test_ring_api, seeding, ML training
-├── docs/                              # Design, decisions, judge Q&A, hardware roadmap, codebook
-├── docker-compose.yml
-└── README.md
+backend/     FastAPI app: api/, core/, models/, schemas/, services/, ml/, events/, workers/, repositories/, tests/
+frontend/    React 19 + Vite SPA: src/{api,components,hooks,pages,ring,stores}, public/, nginx.conf, Dockerfile
+deploy/      Production Docker Compose, Caddyfile, bootstrap.sh, DEPLOY.md runbook
+docs/        Design notes, research, and docs/sentinel-archive/ (17-file provenance-labeled archive)
+scripts/     Ring API tests, ML training/eval, seeding
+hardware_lab/  EXPERIMENTAL protocol work — outside the backend, excluded from CI and the clinical pipeline
 ```
 
 ---
 
-## Hardware Ingestion
-
-| Component | What it does |
-|-----------|--------------|
-| `POST /ring/pair` | Binds a device serial to the patient, issues a one-time device token |
-| `POST /ring/unpair` | Revokes a device; re-pairing issues a fresh token |
-| `POST /ring/data` | Authenticated push (device token or patient JWT) → canonical `SensorData` |
-| `GET /ring/devices` | Device state for patient or psychologist |
-| `RingSource` SDK | `SimulatedRing` (deterministic per-user/hour), `VendorAPIRingSource` (cloud SDK), `BLEGATTRingSource` (bleak, HRM 0x2A37 + battery 0x180F) |
-| `scripts/ring_bridge.py` | Polls any adapter and pushes through the authenticated path |
-| `scripts/sim_ring.py` | Streams simulated device-token data (`--once` for a single push) |
-
-Tokens are stored as SHA-256 hashes, compared with `hmac.compare_digest`, and honored per-request. See `docs/ROADMAP_HARDWARE.md` for the hardware roadmap.
-
----
-
-## Quick Start
+## Local development
 
 ### Backend
 
 ```bash
 cd backend
 python -m venv venv
-venv\Scripts\activate
 pip install -r requirements.txt
-pip install -r requirements-bridge.txt   # only needed for the BLE ring bridge
-```
-
-Set encryption **once** — never change it afterwards or existing data cannot be decrypted:
-
-```
-ENCRYPTION_PASSPHRASE=your_long_passphrase
-ENCRYPTION_SALT=<fixed hex salt, e.g. from: python -c "import secrets; print(secrets.token_hex(16))">
-```
-
-```bash
-python seed_clinic.py                  # seed admin + 30 client clinic demo
+python -m pytest tests -q
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -119,64 +78,48 @@ Health check: `http://localhost:8000/health`
 
 ```bash
 cd frontend
-npm install
+npm ci
+npm run build
 npm run dev
 ```
 
-### Full stack (Docker)
+### Full stack
 
 ```bash
-docker compose up --build
+docker compose -f deploy/docker-compose.prod.yml up -d --build
 ```
+
+See `deploy/DEPLOY.md` for the full VPS runbook. Deployment secrets live only in `deploy/.env` (gitignored); no keys or tokens are committed to this repository.
 
 ---
 
 ## Testing
 
 ```bash
-python scripts/test_ring_api.py        # ring SDK/API tests (incl. BLE parsers)
-cd backend && python -m pytest         # full backend suite (222 tests, ~72s)
+python -m ruff check backend/
+python -m ruff format --check backend/
+python -m pytest backend/tests -q          # 222 tests
+cd frontend && npx tsc -b --pretty false && npm run build
 ```
 
----
-
-## Accounts (clinic seed — `python seed_clinic.py`)
-
-| Role | Username | Password | Notes |
-|------|----------|----------|-------|
-| Admin | `admin` | `password123` | Clinic oversight console (directory, audit log, crises) |
-| Psychologist | `cel` | `1234` | 14 teen clients |
-| Psychologist | `marcus` | `4321` | 16 teen clients |
-| Teen client | `maya_k` | `sentinel123` | Sample client (all 30 clients use `sentinel123`) |
-
-30 teen clients with 12 months of journals, moods, ring vitals, clinical notes and crisis history. Re-seed anytime with `python seed_clinic.py` (also clears any login lockouts).
+The GitHub Actions workflow runs these same gates plus Docker image builds for both services.
 
 ---
 
-## Data Privacy & Security
+## Demo accounts
 
-- Journal raw content encrypted at rest (Fernet, key derived via PBKDF2-600k + HKDF)
-- Ring tokens hashed at rest, constant-time comparison, per-request revocation
-- HttpOnly cookie JWT + ring device tokens; ALWAYS set `ENCRYPTION_PASSPHRASE` and `ENCRYPTION_SALT` to stable values
-- Hash-chained audit log; rate limiting (100 req/min/IP); internal Docker network; sanitized 500s
-- `.env` holds secrets — excluded from version control
+Demo sign-in shortcuts are shown on the login screen of the live app. Credentials are intentionally not listed here.
 
 ---
 
 ## Documentation
 
-| Doc | Purpose |
-|-----|---------|
-| `docs/TECHNICAL_DESIGN.md` | Full architecture, decisions, trade-offs |
-| `docs/ENGINEERING_DECISIONS.md` | Every key decision and alternative |
-| `docs/ENGINEERING_LOGBOOK.md` | Build narrative with timestamps |
-| `docs/JUDGE_QA.md` | Anticipated judge questions + defensible answers |
-| `docs/ROADMAP_HARDWARE.md` | Hardware roadmap |
-| `docs/sentinel_paper.md` / `.pdf` | Research paper (markdown source + PDF build via `scripts/generate_paper_pdf.py`) |
-| `SENTINEL_CODEBOOK.md` | Per-file code explanation (original prototype) |
+- `deploy/DEPLOY.md` — production deployment, TLS, firewall, backup/rollback runbook
+- `docs/sentinel-archive/` — 17-file project archive with `[REPO]` / `[GIT]` / `[SESSION]` / `[INFERRED]` / `[HISTORICAL]` / `[CONFLICT]` provenance labels. Historical and conflicting versions are kept, not silently rewritten.
+- `SENTINEL_CODEBOOK.md` — per-file code explanation from the original prototype
 
 ---
 
 ## License
 
-Educational project. Built for demonstration of a full-stack healthcare simulation platform.
+All Rights Reserved — see [LICENSE](LICENSE).

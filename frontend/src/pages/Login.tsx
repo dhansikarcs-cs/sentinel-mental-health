@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { login, getUser } from '../stores/auth'
 
-/* Fixed palette for the auth screen — pinned dark so it looks identical in both app themes */
+/* Fixed palette for the auth screen — pinned so it looks identical in both app themes */
 const LIME = '#D7F65B'
 const LIME_BRIGHT = '#CDF23E'
 const INK = '#131512'
@@ -21,6 +21,7 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showForgot, setShowForgot] = useState(false)
 
   function redirectAfterLogin() {
     const u = getUser()
@@ -63,11 +64,12 @@ export default function Login() {
     }
   }
 
+  // Our real VPS demo accounts only — no fabricated personas.
   const demoAccounts = [
-    { emoji: '🛡', label: 'Admin', creds: 'admin / password123', u: 'admin', p: 'password123' },
+    { emoji: '🧑', label: 'Patient', creds: 'alaya / 4321', u: 'alaya', p: '4321' },
     { emoji: '🧑‍⚕️', label: 'Psychologist', creds: 'cel / 1234', u: 'cel', p: '1234' },
-    { emoji: '🧑‍⚕️', label: 'Psychologist 2', creds: 'marcus / 4321', u: 'marcus', p: '4321' },
-    { emoji: '🧑', label: 'Teen client', creds: 'maya_k / sentinel123', u: 'maya_k', p: 'sentinel123' },
+    { emoji: '🧑', label: 'Patient 2', creds: 'Sankari / 12345', u: 'Sankari', p: '12345' },
+    { emoji: '🧑‍⚕️', label: 'Psychologist 2', creds: 'Dhansika / dhka', u: 'Dhansika', p: 'dhka' },
   ]
 
   return (
@@ -167,9 +169,18 @@ export default function Login() {
             {loading ? 'Signing in…' : 'Sign in'}
           </button>
 
-          <div style={{ textAlign: 'center', fontSize: '0.8rem', color: TEXT_MUTED_DARK }}>
-            New here? <Link to="/register" style={{ fontWeight: 700, color: LIME_BRIGHT }}>Create an account</Link>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', fontSize: '0.78rem', color: TEXT_MUTED_DARK }}>
+            <span role="button" tabIndex={0} onClick={() => setShowForgot(v => !v)}
+              style={{ cursor: 'pointer', textDecoration: 'underline', color: TEXT_MUTED_DARK }}>
+              Forgot password?
+            </span>
+            <span>New here? <Link to="/register" style={{ fontWeight: 700, color: LIME_BRIGHT }}>Create an account</Link></span>
           </div>
+          {showForgot && (
+            <div style={{ fontSize: '0.72rem', color: TEXT_MUTED_DARK, lineHeight: 1.6, padding: '10px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid ${FIELD_BORDER}' }}>
+              No email service is configured on this deployment, so resets are handled by your clinician or admin using your <strong style={{ color: TEXT_LIGHT }}>username</strong>. Already signed in? Change it under 👤 My Profile → Account security. You can also use a demo account below.
+            </div>
+          )}
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#6B7067', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.12em', marginTop: '2px' }}>
             <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.09)' }} /> demo accounts <span style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.09)' }} />
@@ -187,40 +198,45 @@ export default function Login() {
       </div>
 
       <style>{`
+        /* !important everywhere below: the Design System v2 global input/button
+           rules use !important too, and this auth screen is pinned to a fixed
+           dark palette so it looks identical in both app themes. */
         .login-input {
           width: 100%;
-          background: ${FIELD_BG};
-          border: 1px solid ${FIELD_BORDER};
+          background: ${FIELD_BG} !important;
+          border: 1px solid ${FIELD_BORDER} !important;
           border-radius: 12px;
           padding: 11px 14px;
-          color: ${TEXT_LIGHT};
+          color: ${TEXT_LIGHT} !important;
+          caret-color: ${LIME};
           font-size: 0.9rem;
           outline: none;
           transition: border-color .15s ease, background .15s ease;
         }
-        .login-input:focus { border-color: rgba(215,246,91,0.55); background: rgba(255,255,255,0.07); }
-        .login-input::placeholder { color: #70766B; }
+        .login-input:focus { border-color: rgba(215,246,91,0.55) !important; background: rgba(255,255,255,0.07) !important; box-shadow: none !important; }
+        .login-input::placeholder { color: #70766B !important; opacity: 1 !important; }
         .login-show {
           position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
-          background: none !important; border: none !important; color: ${TEXT_LABEL};
+          background: none !important; border: none !important; color: ${TEXT_LABEL} !important;
           cursor: pointer; font-size: 0.7rem; font-weight: 700; padding: 6px; letter-spacing: 0.04em;
           transition: color .15s ease;
         }
-        .login-show:hover { color: ${TEXT_LIGHT}; }
+        .login-show:hover { color: ${TEXT_LIGHT} !important; border-color: transparent !important; transform: translateY(-50%); }
         .login-submit {
-          width: 100%; background: ${LIME}; color: ${INK}; border: none; border-radius: 999px;
+          width: 100%; background: ${LIME} !important; color: ${INK} !important; border: none !important; border-radius: 999px !important;
           padding: 13px; font-weight: 800; font-size: 0.95rem; cursor: pointer; margin-top: 4px;
-          box-shadow: 0 6px 24px rgba(215,246,91,0.22);
+          box-shadow: 0 6px 24px rgba(215,246,91,0.22) !important;
           transition: transform .12s ease, background .15s ease, box-shadow .15s ease;
         }
-        .login-submit:hover { background: ${LIME_BRIGHT}; transform: translateY(-1px); box-shadow: 0 8px 28px rgba(215,246,91,0.3); }
+        .login-submit:hover { background: ${LIME_BRIGHT} !important; border-color: transparent !important; transform: translateY(-1px); box-shadow: 0 8px 28px rgba(215,246,91,0.3) !important; }
         .login-submit:disabled { opacity: 0.6; cursor: default; transform: none; }
         .demo-pill {
           display: flex; flex-direction: column; align-items: center; gap: 2px;
-          background: rgba(255,255,255,0.03); border: 1px solid ${FIELD_BORDER}; border-radius: 999px;
-          padding: 10px 12px; cursor: pointer; transition: border-color .18s ease, background .18s ease;
+          background: rgba(255,255,255,0.03) !important; border: 1px solid ${FIELD_BORDER} !important; border-radius: 999px !important;
+          color: ${TEXT_LIGHT} !important; padding: 10px 12px; cursor: pointer;
+          transition: border-color .18s ease, background .18s ease;
         }
-        .demo-pill:hover { border-color: rgba(215,246,91,0.5); background: rgba(215,246,91,0.06); }
+        .demo-pill:hover { border-color: rgba(215,246,91,0.5) !important; background: rgba(215,246,91,0.06) !important; transform: none; }
         @media (max-width: 860px) {
           .login-grid { grid-template-columns: 1fr !important; }
           .login-grid > div:first-child { min-height: auto !important; padding: 32px 28px !important; gap: 22px; }

@@ -2,7 +2,13 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
+import { flushRingQueue } from './ring/ringQueue'
 import './index.css'
+
+// A closed tab / sleeping Render backend must not lose ring readings. Retry
+// the durable queue as soon as the app boots, and whenever connectivity returns.
+void flushRingQueue()
+window.addEventListener('online', () => { void flushRingQueue() })
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
@@ -11,20 +17,6 @@ if ('serviceWorker' in navigator) {
     })
   })
 }
-
-// Keep the Render free-tier services warm while this tab is open.
-// Free instances sleep after ~15 min idle and the cold start can exceed
-// Render's proxy timeout (surfacing as 502); a light ping every 5 minutes
-// from any open tab prevents that during a live session.
-function startKeepWarm() {
-  const PING_INTERVAL_MS = 5 * 60 * 1000
-  const ping = () => {
-    fetch('/api/ai/health', { headers: { Accept: 'application/json' } }).catch(() => {})
-  }
-  ping()
-  window.setInterval(ping, PING_INTERVAL_MS)
-}
-if (typeof window !== 'undefined') startKeepWarm()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

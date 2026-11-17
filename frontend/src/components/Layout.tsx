@@ -5,6 +5,8 @@ import { api } from '../api/client'
 import { flushOutbox, getOutboxCount, subscribeOutbox } from '../api/outbox'
 import { computeCrisisStage, CRISIS_STAGE_MESSAGES, todayStr, formatDateTime, formatDate } from '../constants'
 import OnboardingTour from './OnboardingTour'
+import RingConnectButton from './RingConnectButton'
+import { relativeTime } from './RingVitalsCard'
 import { useTheme } from '../hooks/useTheme'
 
 const QUOTES = [
@@ -60,10 +62,11 @@ function RailIcon({ to, label, d, danger }: { to: string; label: string; d: stri
 }
 
 interface Tab { to: string; label: string; icon: string }
+// Kept from our original shell: every route below exists in our App.tsx.
+// Both roles get their OWN ring self-care space; no patient vitals shown here.
 const patientTabs: Tab[] = [
   { to: '/dashboard', label: 'Wellness', icon: I.home },
   { to: '/journal', label: 'Journal', icon: I.journal },
-  { to: '/companion', label: 'AI Hub', icon: I.chat },
   { to: '/bookings', label: 'Booking', icon: I.calendar },
   { to: '/followups', label: 'Follow-Up', icon: I.tasks },
   { to: '/timeline', label: 'Timeline', icon: I.search },
@@ -92,6 +95,12 @@ export default function Layout() {
   const [crisisElapsed, setCrisisElapsed] = useState(0)
   const [theme, setTheme] = useTheme()
   const [pendingSync, setPendingSync] = useState(0)
+  // Own-ring sync freshness (real readings only), for both patients and psychologists.
+  const [ringSync, setRingSync] = useState<any>(null)
+  // ONE side panel: the rail itself slides open into a labeled sidebar.
+  // No separate menu button / no second drawer; on phones the same rail
+  // slides in as a drawer. Escape or backdrop collapses it.
+  const [panelOpen, setPanelOpen] = useState(false)
 
   const [patients, setPatients] = useState<any[]>([])
   const [bookings, setBookings] = useState<any[]>([])
@@ -141,6 +150,24 @@ export default function Layout() {
     api.get('/crisis/log').then((d: any) => setCrisisLog(Array.isArray(d) ? d : [])).catch(() => setCrisisLog([]))
     api.get('/ai/health').then(setAiStatus).catch(() => setAiStatus(null))
   }, [])
+
+  // OWN ring sync freshness, identical for patients and psychologists.
+  // /patients/me/wellness is keyed to the logged-in account only. Refreshes
+  // every 60s so a sync in another tab shows up without a reload.
+  useEffect(() => {
+    const load = () => { api.getWellness().then(setRingSync).catch(() => {}) }
+    load()
+    const timer = setInterval(load, 60000)
+    return () => clearInterval(timer)
+  }, [])
+
+  // Close the drawer with Escape; also keeps it usable with a keyboard.
+  useEffect(() => {
+    if (!panelOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setPanelOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [panelOpen])
 
   useEffect(() => {
     const refresh = () => { getOutboxCount().then(setPendingSync).catch(() => setPendingSync(0)) }
@@ -221,9 +248,17 @@ export default function Layout() {
     }
   }, [role])
 
-  const baseTabs = role === 'Psychologist' ? psychTabs : patientTabs
-  const tabs: Tab[] = role === 'Admin' ? [...patientTabs, { to: '/admin', label: 'Admin Console', icon: I.shield }] : baseTabs
-  const activeTab = tabs.find(t => location.pathname === t.to) || tabs[0]
+  // Only routes that exist in our App.tsx — no dead links.
+  const tabs: Tab[] = role === 'Psychologist' ? psychTabs : patientTabs
+  // Wearables deliberately live in the Wellness & Journal group.
+  const sectionOf = (to: string): string => {
+    if (['/dashboard', '/wearables', '/journal', '/timeline', '/mood'].includes(to)) return 'Wellness & Journal'
+    if (['/bookings', '/followups', '/crisis'].includes(to)) return 'Care & Support'
+    return 'Clinical Workspace'
+  }
+  const SECTION_ORDER = ['Wellness & Journal', 'Clinical Workspace', 'Care & Support']
+  const activeTab = tabs.find(t => location.pathname === t.to)
+    || (location.pathname === '/wearables' ? { to: '/wearables', label: 'Wellness & Journal', icon: I.heart } : tabs[0])
 
   const journalOk = journals.some((j: any) => {
     const d = (j.created_at || j.timestamp || '').slice(0, 10)
@@ -313,36 +348,115 @@ export default function Layout() {
   )
 
   return (
-    <div className="app-shell" style={{ minHeight: '100vh', padding: '14px 18px 14px 96px', position: 'relative', zIndex: 1 }}>
+    <div className={`app-shell${panelOpen ? ' rail-is-open' : ''}`} style={{ minHeight: '100vh', padding: '14px 18px 14px 96px', position: 'relative', zIndex: 1 }}>
       {/* ══ Aurora background — landing glow blobs drifting behind the app ══ */}
       <div className="aurora" aria-hidden>
         <span className="a1" />
         <span className="a2" />
         <span className="a3" />
       </div>
-      {/* ══ Floating icon rail ══ */}
-      <nav className="rail" aria-label="Primary">
-        <Link to={isPsychRole ? '/triage' : '/dashboard'} title="Sentinel">
-          <div className="rail-logo">✳</div>
-        </Link>
-        <div className="rail-sep" />
-        {tabs.map(t => <RailIcon key={t.to} to={t.to} label={t.label} d={t.icon} danger={t.to === '/crisis'} />)}
-        <div className="rail-sep" />
-        <button className="icon-btn" title={theme === 'dark' ? 'Light mode' : 'Dark mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={theme === 'dark' ? I.sun : I.moon} /></svg>
-        </button>
-        <button className="icon-btn" title="My Profile" onClick={() => navigate('/profile')}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={I.user} /></svg>
-        </button>
-        <button className="icon-btn" title="Log out" onClick={() => { logout(); navigate('/login') }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={I.logout} /></svg>
-        </button>
-        {!isPsychRole && (
+      {/* ══ THE ONE side panel: this rail itself slides open. Collapsed =
+          icon rail; open = labeled sidebar with sections + Connect ring.
+          The toggle lives INSIDE the panel, not in the top bar. ══ */}
+      <nav className={`rail sentinel-rail${panelOpen ? ' rail-open' : ''}`} aria-label="Primary"
+        style={panelOpen ? {
+          width: 272, maxWidth: '86vw', padding: '14px 12px', alignItems: 'stretch',
+          borderRadius: 24, gap: 0, justifyContent: 'flex-start', overflowY: 'auto',
+          overflowX: 'hidden', zIndex: 61,
+        } : undefined}>
+        {panelOpen ? (
           <>
-            <div className="rail-sep" />
-            <button className="icon-btn lime pulse-crisis" title="Emergency SOS" onClick={triggerSelfCrisis}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={I.alert} /></svg>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '2px 4px 12px' }}>
+              <div className="rail-logo" style={{ width: 36, height: 36, minWidth: 36, margin: 0, fontSize: '1rem' }}>✳</div>
+              <strong style={{ flex: 1, fontSize: '1rem' }}>Sentinel</strong>
+              <button className="icon-btn" title="Collapse menu" aria-label="Collapse menu" aria-expanded={true} onClick={() => setPanelOpen(false)} style={{ width: 34, height: 34, minWidth: 34 }}>✕</button>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '0 0 12px', padding: '10px 12px', borderRadius: 14, background: 'var(--surface-soft)' }}>
+              <div className="avatar" style={{ width: 34, height: 34, minWidth: 34, fontSize: '0.8rem', background: 'var(--lime)', color: 'var(--lime-ink)' }}>{initials}</div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user?.name}</div>
+                <div style={{ fontSize: '0.66rem', color: 'var(--muted)' }}>@{user?.username} · {role}</div>
+              </div>
+            </div>
+
+            {/* Sectioned nav — Wellness & Journal holds journal/timeline;
+                wearables live INSIDE those pages, not as a 2nd tab. */}
+            <div style={{ flex: 1 }}>
+              {SECTION_ORDER.map(sec => {
+                const items = tabs.filter(t => sectionOf(t.to) === sec)
+                if (!items.length) return null
+                return (
+                  <div key={sec} style={{ marginBottom: '8px' }}>
+                    <div style={{ fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--faint)', padding: '6px 10px' }}>{sec}</div>
+                    {items.map(t => (
+                      <button key={t.to} onClick={() => { navigate(t.to); setPanelOpen(false) }}
+                        style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '10px', padding: '9px 10px', borderRadius: 12, border: '1px solid transparent', cursor: 'pointer', textAlign: 'left', fontSize: '0.82rem', fontWeight: 600, background: location.pathname === t.to ? 'var(--accent-soft)' : 'transparent', color: t.to === '/crisis' ? 'var(--danger)' : 'var(--heading)' }}>
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={t.icon} /></svg>
+                        <span style={{ flex: 1 }}>{t.label}</span>
+                        {location.pathname === t.to && <span style={{ width: 6, height: 6, borderRadius: 999, background: 'var(--accent)' }} />}
+                      </button>
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Connect ring lives in the side panel itself */}
+            <div style={{ margin: '6px 0 0', padding: '12px', borderRadius: 16, border: '1px solid var(--border)', background: 'var(--surface-soft)' }}>
+              <div style={{ fontWeight: 800, fontSize: '0.8rem', marginBottom: '8px' }}>💍 My Ring</div>
+              <RingConnectButton />
+              <div style={{ marginTop: '8px', fontSize: '0.68rem', lineHeight: 1.6, color: (ringSync?.sync_due ?? true) ? 'var(--warn)' : 'var(--ok)' }}>
+                🕒 Last synced: {relativeTime(ringSync?.last_synced)}{(ringSync?.sync_due ?? true) ? ' · sync due today' : ''}
+              </div>
+              {(ringSync?.reading_count ?? 0) > 0 && (
+                <div style={{ fontSize: '0.64rem', color: 'var(--muted)' }}>
+                  {ringSync.reading_count} real reading{ringSync.reading_count === 1 ? '' : 's'} stored
+                  {ringSync.ring ? ` · bpm ${ringSync.ring.bpm ?? '—'} · spo2 ${ringSync.ring.spo2 ?? '—'}` : ''}
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: '10px', display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              <button className="chip" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? '☀️ Light' : '🌙 Dark'}</button>
+              <button className="chip" onClick={() => { navigate('/profile'); setPanelOpen(false) }}>👤 Profile</button>
+              <button className="chip" onClick={() => { navigate('/wearables'); setPanelOpen(false) }}>💍 Full wearables</button>
+              <button className="chip" onClick={() => { logout(); navigate('/login') }}>↪ Log out</button>
+              {!isPsychRole && <button className="chip" style={{ color: 'var(--danger)' }} onClick={() => { triggerSelfCrisis(); setPanelOpen(false) }}>🚨 SOS</button>}
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Toggle is INSIDE the side panel */}
+            <button className="icon-btn" title="Expand menu" aria-label="Expand menu" aria-expanded={false}
+              onClick={() => setPanelOpen(true)} style={{ position: 'relative' }}>
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+              {(ringSync?.sync_due ?? true) && <span title="Ring sync due" style={{ position: 'absolute', top: 4, right: 4, width: 8, height: 8, borderRadius: 999, background: 'var(--lime)', border: '2px solid var(--surface)' }} />}
             </button>
+            <div className="rail-sep" />
+            <Link to={isPsychRole ? '/triage' : '/dashboard'} title="Sentinel">
+              <div className="rail-logo">✳</div>
+            </Link>
+            <div className="rail-sep" />
+            {tabs.map(t => <RailIcon key={t.to} to={t.to} label={t.label} d={t.icon} danger={t.to === '/crisis'} />)}
+            <div className="rail-sep" />
+            <button className="icon-btn" title={theme === 'dark' ? 'Light mode' : 'Dark mode'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={theme === 'dark' ? I.sun : I.moon} /></svg>
+            </button>
+            <button className="icon-btn" title="My Profile" onClick={() => navigate('/profile')}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={I.user} /></svg>
+            </button>
+            <button className="icon-btn" title="Log out" onClick={() => { logout(); navigate('/login') }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={I.logout} /></svg>
+            </button>
+            {!isPsychRole && (
+              <>
+                <div className="rail-sep" />
+                <button className="icon-btn lime pulse-crisis" title="Emergency SOS" onClick={triggerSelfCrisis}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={I.alert} /></svg>
+                </button>
+              </>
+            )}
           </>
         )}
       </nav>
@@ -508,6 +622,35 @@ export default function Layout() {
           </div>
         ))}
       </div>
+
+      {/* Backdrop only when the rail is a phone drawer (desktop pushes content). */}
+      {panelOpen && <div className="rail-backdrop is-on" onClick={() => setPanelOpen(false)} aria-hidden />}
+
+      <style>{`
+        .sentinel-rail { transition: width .28s cubic-bezier(.22,1,.36,1), border-radius .28s ease; }
+        .app-shell { transition: padding-left .28s cubic-bezier(.22,1,.36,1); }
+        /* Desktop: content slides aside to make room for the open rail. */
+        @media (min-width: 701px) and (min-height: 561px) {
+          .app-shell.rail-is-open { padding-left: 300px !important; }
+        }
+        .rail-backdrop { display: none; }
+        /* Phones / short landscape: the same rail slides in as a drawer. */
+        @media (max-width: 700px), (orientation: landscape) and (max-height: 560px) and (max-width: 1200px) {
+          .rail-backdrop.is-on { display: block !important; position: fixed; inset: 0; background: rgba(10,12,9,0.52); z-index: 59; }
+          .sentinel-rail.rail-open {
+            animation: sentinelRailIn .28s cubic-bezier(.22,1,.36,1) both;
+            top: 0 !important; bottom: 0 !important; left: 0 !important; right: auto !important;
+            transform: none; width: min(320px, 86vw) !important; max-width: none !important;
+            height: 100dvh !important; max-height: none !important;
+            flex-direction: column !important; align-items: stretch !important; justify-content: flex-start !important;
+            overflow-y: auto !important; overflow-x: hidden !important;
+            border-radius: 0 24px 24px 0 !important;
+            padding: 14px 12px calc(20px + env(safe-area-inset-bottom, 0px)) !important;
+            gap: 0 !important; z-index: 60 !important;
+          }
+        }
+        @keyframes sentinelRailIn { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+      `}</style>
     </div>
   )
 }

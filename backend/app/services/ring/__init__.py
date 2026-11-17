@@ -7,14 +7,11 @@ from app.services.ring.ble_gatt import (
     uint8,
     uint16_le,
 )
-from app.services.ring.simulated import SCENARIOS, SimulatedRing
 from app.services.ring.vendor_api import VendorAPIRingSource
 
 __all__ = [
     "RingSource",
     "SensorData",
-    "SimulatedRing",
-    "SCENARIOS",
     "VendorAPIRingSource",
     "BLEGATTRingSource",
     "BATTERY_LEVEL",

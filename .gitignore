@@ -31,7 +31,6 @@ IRIS/
 IRIS_2026_SENTINEL/
 MindRise*
 *.tsbuildinfo
-azure-deploy/
 # docs kept locally in the workspace, not published to GitHub
 kiot/
 docs/business/
@@ -57,3 +56,14 @@ proposal.md
 test.pdf
 # private review artifacts (never pushed)
 concerns.md
+# deployment secrets (never pushed)
+deploy/.env
+deploy/data/
+deploy/keys/
+
+# local virtualenv / caches (never published)
+backend/venv/
+backend/.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

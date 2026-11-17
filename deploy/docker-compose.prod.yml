@@ -1,0 +1,100 @@
+# Production stack for a single Hostinger/Lightsail-style VPS.
+# Run from repo root:  docker compose -f deploy/docker-compose.prod.yml up -d --build
+# All secrets come from deploy/.env (gitignored). See deploy/.env.example.
+
+name: sentinel-prod
+
+services:
+  sentinel-backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    expose:
+      - "8000"
+    environment:
+      # backend/Dockerfile defaults to 10000; Caddy targets 8000, so set it.
+      PORT: "8000"
+      DATABASE_URL: "sqlite:///./data/sentinel.db"
+      JWT_SECRET: "${JWT_SECRET:?set JWT_SECRET in deploy/.env}"
+      # DOMAIN is a BARE hostname (Caddy needs that). CORS + trustee links
+      # need a full origin, so derive https:// from it here.
+      CORS_ORIGINS: "https://${DOMAIN:-sentinelpsytech.com}"
+      SENTINEL_ACK_LINK: "https://${DOMAIN:-sentinelpsytech.com}/trustee"
+      COOKIE_SECURE: "true"
+      RUN_WORKERS: "false"
+      RATE_LIMIT_BACKEND: "memory"
+      WS_PUBSUB: "off"
+      # ---- AI: co-founder fills these later without touching this file ----
+      ALLOW_CLOUD_AI: "${ALLOW_CLOUD_AI:-false}"
+      GROQ_API_KEY: "${GROQ_API_KEY:-}"
+      OLLAMA_URL: "${OLLAMA_URL:-http://127.0.0.1:11434}"
+      # ---- Email: optional, blank = offline fallback ----
+      SMTP_HOST: "${SMTP_HOST:-smtp.gmail.com}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      EMAIL_FROM: "${EMAIL_FROM:-}"
+      CRISIS_HELPLINE_EMAIL: "${CRISIS_HELPLINE_EMAIL:-}"
+      # ---- Journal encryption ----
+      # The migrated local DB contains plaintext journals, so keep this false
+      # for the pilot. For real patient data: set true, set a fixed
+      # ENCRYPTION_PASSPHRASE *and* a fixed SENTINEL_ENCRYPTION_SALT, and start
+      # from a FRESH DB. The salt must never change or existing journals are
+      # unreadable forever.
+      ENCRYPTION_REQUIRED: "${ENCRYPTION_REQUIRED:-false}"
+      ENCRYPTION_PASSPHRASE: "${ENCRYPTION_PASSPHRASE:-}"
+      SENTINEL_ENCRYPTION_SALT: "${SENTINEL_ENCRYPTION_SALT:-}"
+    volumes:
+      # Bind mount so the verified local DB (demo accounts + real ring rows,
+      # no fake vitals) can be dropped in before the first start.
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks: [internal]
+
+  sentinel-frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    expose:
+      - "10000"
+    environment:
+      # frontend/nginx.conf is a template: BOTH vars must be set or nginx
+      # fails to render. Caddy intercepts /api/* so this proxy is a fallback.
+      PORT: "10000"
+      # Includes /api so nginx's `proxy_pass ${BACKEND_URL}/` keeps the prefix.
+      BACKEND_URL: "http://sentinel-backend:8000/api"
+    depends_on:
+      sentinel-backend:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [internal]
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: "${DOMAIN:-sentinelpsytech.com}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - sentinel-backend
+      - sentinel-frontend
+    restart: unless-stopped
+    networks: [internal]
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  internal:

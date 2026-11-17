@@ -3,12 +3,14 @@
 import re
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_user
+from app.models.journal import JournalEntry
+from app.models.ring import RingSensorLog
 from app.models.user import User
 from app.services.audit import log_audit
 from app.services.websocket_manager import manager
@@ -315,4 +317,115 @@ async def check_discrepancy(
         biometric_state=bio_state,
         processing_ms=round(ms, 2),
         alert_broadcasted=alert_sent,
+    )
+
+
+class PatientComparisonRequest(BaseModel):
+    patient_username: str
+
+
+class PatientComparisonResponse(BaseModel):
+    patient_username: str
+    journal_available: bool
+    vitals_available: bool
+    bpm: int | None
+    hrv: int | None
+    discrepancy_detected: bool
+    text_sentiment: str
+    biometric_state: str
+    processing_ms: float
+    note: str
+
+
+@router.post("/check-patient", response_model=PatientComparisonResponse)
+async def check_patient_discrepancy(
+    req: PatientComparisonRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Server-side text-vs-vitals comparison using ONLY real stored data.
+
+    Unlike /check, the caller cannot supply bpm/hrv/journal text: both are read
+    from the database, so no fabricated values can enter a clinical comparison.
+    Access is limited to patients assigned to the calling psychologist.
+    """
+    username = req.patient_username
+    patient = db.query(User).filter(User.username == username, User.role == "patient").first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    # A patient may compare their own record; a psychologist only their assigned patients.
+    if user.role == "psychologist":
+        if patient.assigned_psych != user.username:
+            raise HTTPException(status_code=403, detail="Patient not assigned to this psychologist")
+    elif user.username != username:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    journal = (
+        db.query(JournalEntry)
+        .filter(JournalEntry.patient_username == username, JournalEntry.deleted_at.is_(None))
+        .order_by(JournalEntry.timestamp.desc())
+        .first()
+    )
+    rows = (
+        db.query(RingSensorLog)
+        .filter(RingSensorLog.patient_username == username)
+        .order_by(RingSensorLog.logged_at.desc())
+        .limit(50)
+        .all()
+    )
+
+    def latest(field: str):
+        return next((getattr(r, field) for r in rows if getattr(r, field) is not None), None)
+
+    bpm = latest("bpm")
+    hrv = latest("hrv")
+    journal_text = (journal.raw_content or "") if journal else ""
+
+    if not journal_text.strip() or bpm is None or hrv is None:
+        return PatientComparisonResponse(
+            patient_username=username,
+            journal_available=bool(journal_text.strip()),
+            vitals_available=bpm is not None and hrv is not None,
+            bpm=bpm,
+            hrv=hrv,
+            discrepancy_detected=False,
+            text_sentiment="insufficient_data",
+            biometric_state="insufficient_data",
+            processing_ms=0.0,
+            note="Comparison requires a journal entry AND measured bpm+hrv. Nothing is invented.",
+        )
+
+    detected, sentiment, bio_state, ms = _detect(journal_text, int(bpm), int(hrv))
+    if detected:
+        await manager.broadcast_to_psych(
+            "discrepancy_alert",
+            {
+                "patient": username,
+                "sentiment": sentiment,
+                "bpm": int(bpm),
+                "hrv": int(hrv),
+                "biometric_state": bio_state,
+                "processing_ms": round(ms, 2),
+            },
+        )
+    log_audit(
+        "patient_discrepancy_check",
+        user=user.username,
+        role=user.role,
+        severity="HIGH" if detected else "INFO",
+        status="success",
+        details=f"patient={username}, sentiment={sentiment}, bio={bio_state}, detected={detected}",
+        db=db,
+    )
+    return PatientComparisonResponse(
+        patient_username=username,
+        journal_available=True,
+        vitals_available=True,
+        bpm=int(bpm),
+        hrv=int(hrv),
+        discrepancy_detected=detected,
+        text_sentiment=sentiment,
+        biometric_state=bio_state,
+        processing_ms=round(ms, 2),
+        note="Computed from the patient's stored journal and real wearable readings only.",
     )

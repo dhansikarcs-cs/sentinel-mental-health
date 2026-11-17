@@ -3,14 +3,13 @@ import json
 import secrets
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.dependencies import RingIdentity, get_current_user, get_ring_identity
 from app.core.input_validator import validate_sensor_data
-from app.core.structured_errors import ErrorCode, err
 from app.models.ring import RingSensorLog
 from app.models.ring_device import RingDevice
 from app.models.user import User
@@ -36,7 +35,7 @@ def pair_ring_device(data: RingDeviceCreate, user: User = Depends(get_current_us
     token = secrets.token_urlsafe(32)
     if existing:
         if existing.status == "paired":
-            raise err(status.HTTP_409_CONFLICT, ErrorCode.DEVICE_ALREADY_PAIRED, "Serial already paired")
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Serial already paired")
         existing.patient_username = user.username
         existing.device_token_hash = _hash_device_token(token)
         existing.vendor = data.vendor
@@ -97,9 +96,9 @@ def pair_ring_device(data: RingDeviceCreate, user: User = Depends(get_current_us
 def unpair_ring_device(serial: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     device = db.query(RingDevice).filter(RingDevice.serial == serial).first()
     if not device:
-        raise err(status.HTTP_404_NOT_FOUND, ErrorCode.DEVICE_NOT_FOUND, "Device not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
     if device.patient_username != user.username and user.role != "psychologist":
-        raise err(status.HTTP_403_FORBIDDEN, ErrorCode.OWNER_ONLY, "Not your device")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your device")
     device.status = "revoked"
     device.device_token_hash = ""
     db.commit()
@@ -138,6 +137,11 @@ def list_ring_devices(user: User = Depends(get_current_user), db: Session = Depe
 def push_sensor_data(
     data: SensorDataCreate, identity: RingIdentity = Depends(get_ring_identity), db: Session = Depends(get_db)
 ):
+    """Store ONLY the measurements the device actually sent.
+
+    Unmeasured fields stay NULL. Nothing is defaulted, derived (no sdnn from
+    hrv), and no value is invented (no hardcoded temperature).
+    """
     user = identity.user
     validate_sensor_data(
         bpm=data.bpm or 0,
@@ -149,23 +153,21 @@ def push_sensor_data(
     now = datetime.now(UTC).isoformat()
     device_id = data.device_id or (identity.device.serial if identity.device else "") or f"ring_{user.username}"
 
+    measured = {
+        "bpm": data.bpm,
+        "stress": data.stress,
+        "sleep_hours": data.sleep_hours,
+        "spo2": data.spo2,
+        "hrv": data.hrv,
+    }
+
     # Cloud transports deliver at-least-once: replay the same seq idempotently
     # so retries and duplicates land exactly one row (seq is NULL for legacy
     # pushes, which keep the old always-insert behaviour).
     envelope = None
     if data.seq is not None:
         envelope = json.dumps(
-            {
-                "device_id": device_id,
-                "seq": data.seq,
-                "bpm": data.bpm,
-                "stress": data.stress,
-                "sleep_hours": data.sleep_hours,
-                "spo2": data.spo2,
-                "hrv": data.hrv,
-                "timestamp": data.timestamp or "",
-                "logged_at": now,
-            }
+            {"device_id": device_id, "seq": data.seq, **measured, "timestamp": data.timestamp or "", "logged_at": now}
         )
         existing = db.query(RingSensorLog).filter_by(device_id=device_id, seq=data.seq).first()
         if existing:
@@ -177,11 +179,7 @@ def push_sensor_data(
     log = RingSensorLog(
         device_id=device_id,
         patient_username=user.username,
-        bpm=data.bpm,
-        stress=data.stress,
-        sleep_hours=data.sleep_hours,
-        spo2=data.spo2,
-        hrv=data.hrv,
+        **measured,
         seq=data.seq,
         raw_json=envelope,
         logged_at=now,
@@ -196,25 +194,29 @@ def push_sensor_data(
             return existing
         raise
 
+    # Mirror into the legacy table, preserving NULLs for anything unmeasured.
+    # sdnn and temperature are NOT derived or hardcoded - they require a real
+    # measurement of their own.
     sr = SensorReading(
         patient_username=user.username,
         device_id=device_id,
         heart_rate=data.bpm,
-        rmssd=float(data.hrv),
-        sdnn=float(data.hrv) * 0.8,
-        temperature=36.5,
+        rmssd=float(data.hrv) if data.hrv is not None else None,
+        sdnn=None,
+        temperature=None,
         logged_at=now,
     )
     db.add(sr)
     db.commit()
     db.refresh(log)
+    measured_summary = {k: v for k, v in measured.items() if v is not None}
     log_audit(
         "sensor_data_pushed",
         user=user.username,
         role=user.role,
         severity="INFO",
         status="success",
-        details=f"bpm={data.bpm}, stress={data.stress}, device={device_id}",
+        details=f"measured={measured_summary}, device={device_id}",
         db=db,
     )
     return log

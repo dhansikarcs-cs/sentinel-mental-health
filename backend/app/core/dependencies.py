@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.security import decode_access_token
-from app.core.structured_errors import ErrorCode, err
 from app.core.token_blacklist import token_blacklist
 from app.models.ring_device import RingDevice
 from app.models.user import User
@@ -27,28 +26,28 @@ def get_current_user(
     if not token:
         token = request.cookies.get("access_token")
     if not token:
-        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHORIZED, "Not authenticated")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     payload = decode_access_token(token)
     if not payload:
-        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHORIZED, "Invalid token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
     jti = payload.get("jti", "")
     if token_blacklist.is_revoked(jti):
-        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.TOKEN_REVOKED, "Token revoked")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
 
     username = payload.get("sub")
     if not username:
-        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHORIZED, "Invalid token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     user = db.query(User).filter(User.username == username).first()
     if not user:
-        raise err(status.HTTP_401_UNAUTHORIZED, ErrorCode.UNAUTHORIZED, "User not found")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     return user
 
 
 def require_role(*roles: str):
     def _check(user: User = Depends(get_current_user)):
         if user.role not in roles:
-            raise err(status.HTTP_403_FORBIDDEN, ErrorCode.INSUFFICIENT_PERMISSIONS, "Insufficient permissions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
         return user
 
     return _check
@@ -96,5 +95,10 @@ def get_ring_identity(
         db.commit()
         return RingIdentity(user=user, device=device)
 
-    user = get_current_user(request=request, credentials=None, db=db)
+    auth_header = request.headers.get("Authorization") or ""
+    if auth_header.lower().startswith("bearer "):
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_header[7:].strip())
+        user = get_current_user(request=request, credentials=creds, db=db)
+    else:
+        user = get_current_user(request=request, credentials=None, db=db)
     return RingIdentity(user=user, device=None)

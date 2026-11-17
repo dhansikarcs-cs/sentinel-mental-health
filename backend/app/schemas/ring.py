@@ -2,12 +2,19 @@ from pydantic import BaseModel, Field
 
 
 class SensorDataCreate(BaseModel):
+    """Wearable ingestion payload.
+
+    Every physiological field is OPTIONAL. A device must only send what it
+    actually measured; Sentinel never fills unmeasured fields with defaults,
+    derived values, or invented numbers.
+    """
+
     device_id: str = ""
-    bpm: int = Field(default=72, ge=30, le=250)
-    stress: int = Field(default=35, ge=0, le=100)
-    sleep_hours: float = Field(default=7.0, ge=0, le=24)
-    spo2: float = Field(default=98.0, ge=50, le=100)
-    hrv: int = Field(default=50, ge=0, le=300)
+    bpm: int | None = Field(default=None, ge=30, le=250)
+    stress: int | None = Field(default=None, ge=0, le=100)
+    sleep_hours: float | None = Field(default=None, ge=0, le=24)
+    spo2: float | None = Field(default=None, ge=50, le=100)
+    hrv: int | None = Field(default=None, ge=0, le=300)
     seq: int | None = Field(default=None, ge=0, le=2_147_483_647)
     timestamp: str | None = None
 
@@ -16,11 +23,11 @@ class SensorDataResponse(BaseModel):
     id: int
     device_id: str
     patient_username: str
-    bpm: int
-    stress: int
-    sleep_hours: float
-    spo2: float
-    hrv: int
+    bpm: int | None
+    stress: int | None
+    sleep_hours: float | None
+    spo2: float | None
+    hrv: int | None
     seq: int | None = None
     logged_at: str
 
@@ -30,7 +37,7 @@ class SensorDataResponse(BaseModel):
 
 class RingDeviceCreate(BaseModel):
     serial: str = Field(min_length=1, max_length=128)
-    vendor: str = "simulated"
+    vendor: str = ""
 
 
 class RingDeviceResponse(BaseModel):

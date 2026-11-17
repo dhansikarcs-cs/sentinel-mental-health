@@ -20,28 +20,10 @@ async function publicPost(path: string) {
 }
 
 const ADDRESSES: Record<string, string> = {
-  'test_patient_1': '42 Lakeview Drive, Apt 7B, Portland, OR 97201',
-  'test_patient_2': '815 Maple Street, House #3, Portland, OR 97202',
-  'test_patient_3': '1200 Pine Avenue, Unit 12, Portland, OR 97203',
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', padding: '28px' }}>
-      <div style={{ width: '100%', maxWidth: '540px' }}>{children}</div>
-    </div>
-  )
-}
-
-function CenterState({ icon, title, color, body }: { icon: string; title: string; color: string; body: string }) {
-  return (
-    <div className="card" style={{ padding: '44px 36px', textAlign: 'center' }}>
-      <div style={{ fontSize: '3rem', marginBottom: '12px' }}>{icon}</div>
-      <h1 style={{ color: `${color} !important`, fontSize: '1.5rem', marginBottom: '8px' }}>{title}</h1>
-      <p style={{ color: 'var(--muted)', fontSize: '0.92rem', lineHeight: 1.6 }}>{body}</p>
-      <p style={{ color: 'var(--faint)', fontSize: '0.78rem', marginTop: '18px', fontWeight: 700 }}>Sentinel — Crisis Response System</p>
-    </div>
-  )
+  "test_patient_1": "42 Lakeview Drive, Apt 7B, Portland, OR 97201",
+  "test_patient_2": "815 Maple Street, House #3, Portland, OR 97202",
+  "test_patient_3": "1200 Pine Avenue, Unit 12, Portland, OR 97203",
+  "alaya": "12 Rosewood Lane, Green Park, New Delhi 110016",
 }
 
 export default function TrusteePortalPage() {
@@ -80,25 +62,55 @@ export default function TrusteePortalPage() {
   }
 
   if (loading) return (
-    <Shell><CenterState icon="⏳" title="Loading…" color="var(--heading)" body="Checking the current status." /></Shell>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg, var(--bg), var(--bg-2))' }}>
+      <div style={{ color: 'var(--muted)', fontSize: '1rem' }}>Loading...</div>
+    </div>
   )
 
   const linkInvalid = !params.get('sig') || !params.get('patient') || state === null
 
   if (linkInvalid) return (
-    <Shell><CenterState icon="🔒" title="Invalid or expired link" color="var(--heading)" body="This safety link is invalid or has expired. Please request a fresh link from your loved one's care team." /></Shell>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg, var(--bg), var(--bg-2))', padding: '32px' }}>
+      <div style={{ textAlign: 'center', maxWidth: '480px' }}>
+        <div style={{ fontSize: '3rem', marginBottom: '12px' }}>🔒</div>
+        <h1 style={{ color: 'var(--strong)', fontSize: '1.5rem', marginBottom: '8px' }}>Invalid or Expired Link</h1>
+        <p style={{ color: 'var(--muted)', fontSize: '0.9375rem' }}>This safety link is invalid or has expired. Please request a fresh link from your loved one's care team.</p>
+        <p style={{ color: 'var(--faint)', fontSize: '0.8125rem', marginTop: '16px' }}>Sentinel — Crisis Response System</p>
+      </div>
+    </div>
   )
 
   if (!state?.active) return (
-    <Shell><CenterState icon="🟢" title="Trusted Contact Portal" color="var(--ok)" body="No active crisis at this time." /></Shell>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg, var(--bg), var(--bg-2))', padding: '32px' }}>
+      <div style={{ textAlign: 'center', maxWidth: '480px' }}>
+        <div style={{ fontSize: '3rem', marginBottom: '12px' }}>🟢</div>
+        <h1 style={{ color: 'var(--ok)', fontSize: '1.5rem', marginBottom: '8px' }}>Trusted Contact Portal</h1>
+        <p style={{ color: 'var(--muted)', fontSize: '1rem' }}>No active crisis at this time.</p>
+        <p style={{ color: 'var(--faint)', fontSize: '0.8125rem', marginTop: '16px' }}>Sentinel — Crisis Response System</p>
+      </div>
+    </div>
   )
 
   if (state?.acknowledged) return (
-    <Shell><CenterState icon="✅" title="Crisis resolved" color="var(--ok)" body="This crisis has been acknowledged by the clinical team. No further action needed." /></Shell>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg, var(--bg), var(--bg-2))', padding: '32px' }}>
+      <div style={{ textAlign: 'center', maxWidth: '480px' }}>
+        <div style={{ fontSize: '3rem', marginBottom: '12px' }}>✅</div>
+        <h1 style={{ color: 'var(--ok)', fontSize: '1.5rem', marginBottom: '8px' }}>Crisis Resolved</h1>
+        <p style={{ color: 'var(--muted)', fontSize: '0.9375rem' }}>This crisis has been acknowledged by the clinical team. No further action needed.</p>
+        <p style={{ color: 'var(--faint)', fontSize: '0.8125rem', marginTop: '16px' }}>Sentinel — Crisis Response System</p>
+      </div>
+    </div>
   )
 
   if (state?.trustee_acknowledged) return (
-    <Shell><CenterState icon="🚀" title="You've already responded" color="var(--ok)" body="Thank you! Your status has been recorded. Please proceed to check on your loved one." /></Shell>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg, var(--bg), var(--bg-2))', padding: '32px' }}>
+      <div style={{ textAlign: 'center', maxWidth: '480px' }}>
+        <div style={{ fontSize: '3rem', marginBottom: '12px' }}>✅</div>
+        <h1 style={{ color: 'var(--ok)', fontSize: '1.5rem', marginBottom: '8px' }}>You've Already Responded</h1>
+        <p style={{ color: 'var(--muted)', fontSize: '0.9375rem' }}>Thank you! Your status has been recorded. Please proceed to check on your loved one.</p>
+        <p style={{ color: 'var(--faint)', fontSize: '0.8125rem', marginTop: '16px' }}>Sentinel — Crisis Response System</p>
+      </div>
+    </div>
   )
 
   const patient = state.patient || 'your loved one'
@@ -106,52 +118,46 @@ export default function TrusteePortalPage() {
   const displayTime = elapsed >= 60 ? '60+' : String(elapsed)
 
   return (
-    <Shell>
-      <div className="card" style={{ padding: '34px 32px' }}>
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '18px' }}>
-          <div style={{ width: 36, height: 36, borderRadius: 999, background: 'var(--ink)', color: 'var(--lime)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem' }}>✳</div>
-          <span style={{ fontWeight: 800, fontSize: '1rem' }}>Sentinel · Trusted Contact</span>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg, var(--bg), var(--bg-2))', padding: '32px' }}>
+      <div style={{ width: '100%', maxWidth: '520px' }}>
+        <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>👤</div>
+          <h1 style={{ fontSize: '1.5rem', color: 'var(--strong)', margin: '0 0 4px 0' }}>Trusted Contact Portal</h1>
+          <p style={{ color: 'var(--text)', fontSize: '1.125rem', margin: '8px 0' }}>
+            <strong>{patient}</strong> triggered a crisis alert <strong>{displayTime}s ago</strong>.
+          </p>
         </div>
 
-        <div className="card-lime" style={{ padding: '20px 22px', borderRadius: '18px', marginBottom: '16px' }}>
-          <div style={{ fontSize: '0.68rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em', opacity: 0.7 }}>Active crisis alert</div>
-          <div style={{ fontSize: '1.25rem', fontWeight: 800, margin: '4px 0' }}>
-            {patient} triggered an alert {displayTime}s ago
-          </div>
-          <div style={{ fontSize: '0.8rem', opacity: 0.8 }}>Reaching out quickly matters. Thank you for being their person.</div>
-        </div>
-
-        <div className="card-sm" style={{ padding: '16px', marginBottom: '16px' }}>
-          <div style={{ color: 'var(--muted)', fontSize: '0.72rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '4px' }}>📍 Last known location</div>
-          <div style={{ color: 'var(--heading)', fontSize: '1rem', fontWeight: 700 }}>{address}</div>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border-soft)', borderRadius: '10px', padding: '16px', marginBottom: '16px' }}>
+          <div style={{ color: 'var(--soft)', fontSize: '0.8125rem', marginBottom: '4px' }}>📍 Last known location</div>
+          <div style={{ color: 'var(--strong)', fontSize: '1rem', fontWeight: 600 }}>{address}</div>
         </div>
 
         {!acknowledged ? (
-          <>
-            <button
-              onClick={handleAcknowledge}
-              className="btn-primary pulse-crisis"
-              style={{ width: '100%', padding: '18px', fontSize: '1.1rem', fontWeight: 800 }}
-            >
-              ✅ Yes, I&apos;m on my way
-            </button>
-            <div style={{ textAlign: 'center', color: 'var(--faint)', fontSize: '0.7rem', marginTop: '10px' }}>
-              Confirming marks you as responding — the clinical team sees it instantly.
-            </div>
-          </>
+          <button
+            onClick={handleAcknowledge}
+            style={{
+              width: '100%', padding: '16px', fontSize: '1.1rem', fontWeight: 700,
+              background: 'linear-gradient(135deg, var(--ok), #16a34a)',
+              border: 'none', borderRadius: '12px', color: 'white', cursor: 'pointer',
+              boxShadow: '0 4px 16px rgba(46,139,87,0.3)',
+            }}
+          >
+            ✅ Yes, I'm on my way!
+          </button>
         ) : (
-          <div style={{ background: 'var(--ok-soft)', border: '1px solid color-mix(in srgb, var(--ok) 30%, transparent)', borderRadius: '18px', padding: '24px', textAlign: 'center' }}>
-            <div style={{ fontSize: '2.2rem', marginBottom: '8px' }}>🚀</div>
-            <div style={{ color: 'var(--ok)', fontSize: '1.25rem', fontWeight: 800, marginBottom: '4px' }}>Thank you!</div>
-            <div style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>You are marked as <strong style={{ color: 'var(--ok)' }}>“On the Way”</strong>.</div>
+          <div style={{ background: 'var(--ok-alpha)', border: '1px solid rgba(46,139,87,0.3)', borderRadius: '12px', padding: '20px', textAlign: 'center' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🚀</div>
+            <div style={{ color: 'var(--ok)', fontSize: '1.25rem', fontWeight: 700, marginBottom: '4px' }}>Thank you!</div>
+            <div style={{ color: 'var(--muted)', fontSize: '0.875rem' }}>You are marked as <strong style={{ color: 'var(--ok)' }}>'On the Way'</strong>.</div>
             <div style={{ color: 'var(--faint)', fontSize: '0.75rem', marginTop: '8px' }}>Please proceed to check on {patient} as soon as possible.</div>
           </div>
         )}
 
-        <p style={{ textAlign: 'center', color: 'var(--faint)', fontSize: '0.72rem', marginTop: '22px' }}>
+        <p style={{ textAlign: 'center', color: 'var(--faint)', fontSize: '0.75rem', marginTop: '24px' }}>
           Sentinel — Crisis Response System
         </p>
       </div>
-    </Shell>
+    </div>
   )
 }

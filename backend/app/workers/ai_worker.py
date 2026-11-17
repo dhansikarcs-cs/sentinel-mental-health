@@ -14,25 +14,6 @@ EMOTION_CLASSIFIER_VERSION = "1.0.0"
 RISK_ENGINE_VERSION = "1.0.0"
 
 
-def _broadcast_psych(event_type: str, payload: dict) -> None:
-    """Fire a websocket broadcast from a non-async background thread.
-
-    The worker runs inside FastAPI's threadpool (no running event loop), so
-    ``asyncio.get_event_loop()`` raises. Schedule onto the server's main loop
-    instead; broadcast is best-effort and must never roll back the DB commit.
-    """
-    from app.services.websocket_manager import manager
-
-    try:
-        loop = manager._loop
-        if loop is None or loop.is_closed():
-            logger.warning("WebSocket loop unavailable — skipping %s broadcast", event_type)
-            return
-        asyncio.run_coroutine_threadsafe(manager.broadcast_to_psych(event_type, payload), loop)
-    except Exception as e:
-        logger.warning("WebSocket broadcast %s failed: %s", event_type, e)
-
-
 def analyze_journal_background(journal_id: int, raw_content: str, patient_username: str) -> None:
     logger.info("Background AI analysis started for journal %s", journal_id)
     now = datetime.now(UTC).isoformat()
@@ -87,7 +68,6 @@ def analyze_journal_background(journal_id: int, raw_content: str, patient_userna
     from app.models.journal import JournalEntry
     from app.models.notification import Notification
     from app.models.risk_assessment import RiskAssessment
-    from app.models.user import User
 
     db = SessionLocal()
     try:
@@ -222,15 +202,8 @@ def analyze_journal_background(journal_id: int, raw_content: str, patient_userna
                     details=CRISIS_POLICY.crisis_log_details.format(risk_score=risk_score),
                 )
                 db.add(log)
-                psych_username = ""
-                patient_row = (
-                    db.query(User).filter(User.username == patient_username, User.deleted_at.is_(None)).first()
-                )
-                if patient_row:
-                    psych_username = patient_row.assigned_psych or ""
                 notif_psych = Notification(
                     patient_username=patient_username,
-                    recipient_username=psych_username or None,
                     title="CRITICAL: Auto-Crisis Triggered",
                     message=CRISIS_POLICY.auto_trigger_message.format(
                         risk_score=risk_score, journal_id=journal_id, delay=CRISIS_POLICY.trusted_contact_delay_seconds
@@ -241,26 +214,38 @@ def analyze_journal_background(journal_id: int, raw_content: str, patient_userna
                 )
                 db.add(notif_psych)
 
-                _broadcast_psych(
-                    "crisis_alert",
+                from app.services.websocket_manager import manager
+
+                loop = asyncio.get_event_loop()
+                loop.create_task(
+                    manager.broadcast_to_psych(
+                        "crisis_alert",
+                        {
+                            "patient": patient_username,
+                            "risk_score": risk_score,
+                            "message": CRISIS_POLICY.auto_trigger_alert.format(
+                                patient=patient_username, risk_score=risk_score
+                            ),
+                            "timestamp": datetime.now(UTC).isoformat(),
+                        },
+                    )
+                )
+        elif CRISIS_POLICY.should_warn(risk_score):
+            from app.services.websocket_manager import manager
+
+            loop = asyncio.get_event_loop()
+            loop.create_task(
+                manager.broadcast_to_psych(
+                    "risk_warning",
                     {
                         "patient": patient_username,
                         "risk_score": risk_score,
-                        "message": CRISIS_POLICY.auto_trigger_alert.format(
+                        "message": CRISIS_POLICY.risk_warning_alert.format(
                             patient=patient_username, risk_score=risk_score
                         ),
                         "timestamp": datetime.now(UTC).isoformat(),
                     },
                 )
-        elif CRISIS_POLICY.should_warn(risk_score):
-            _broadcast_psych(
-                "risk_warning",
-                {
-                    "patient": patient_username,
-                    "risk_score": risk_score,
-                    "message": CRISIS_POLICY.risk_warning_alert.format(patient=patient_username, risk_score=risk_score),
-                    "timestamp": datetime.now(UTC).isoformat(),
-                },
             )
 
         db.commit()

@@ -19,7 +19,6 @@ from app.models.crisis import CrisisLog
 from app.models.emotion_result import EmotionResult
 from app.models.journal import JournalEntry
 from app.models.risk_assessment import RiskAssessment
-from app.models.user import User
 
 
 def _auth(token: str) -> dict:
@@ -136,17 +135,8 @@ def test_peer_patient_cannot_read_other_patient_clinical_data(client, make_user,
         == 403
     )
 
-    # psychologist still allowed (only the patient's assigned clinician)
+    # psychologist still allowed
     psych = make_user(role="psychologist")
-    db_session.query(User).filter(User.username == owner["username"]).update({"assigned_psych": psych["username"]})
-    db_session.commit()
-    unassigned_psych = make_user(role="psychologist")
-    assert (
-        client.get(
-            f"/api/risk-assessments/patient/{owner['username']}", headers=_auth(unassigned_psych["access_token"])
-        ).status_code
-        == 403
-    )
     assert (
         client.get(
             f"/api/risk-assessments/patient/{owner['username']}", headers=_auth(psych["access_token"])

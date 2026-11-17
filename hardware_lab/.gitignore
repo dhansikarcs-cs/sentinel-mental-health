@@ -1,0 +1,5 @@
+# Experimental capture data - never commit raw device packets or tokens.
+out/
+local_secrets.json
+__pycache__/
+*.pyc

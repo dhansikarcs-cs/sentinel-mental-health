@@ -1351,3 +1351,34 @@ body { min-height: 100vh; min-height: 100dvh; }
   .page-title { font-size: 1.6rem; }
   .topbar-schedule { padding: 8px 10px; }
 }
+
+
+/* ── Mobile performance (additive, appended after Design System v2) ──────────
+   Phones pay a high GPU/compositing cost for large blurred, infinitely
+   animated decoration. Keep every one-shot entrance/exit animation (cheap and
+   finite, e.g. the drawer slide) and every small status pulse; drop only the
+   continuous full-screen effects and the layout-animating transitions below
+   the phone / short-landscape breakpoint. Desktop is completely unaffected.
+   ───────────────────────────────────────────────────────────────────────── */
+@media (max-width: 700px), (orientation: landscape) and (max-height: 560px) and (max-width: 1200px) {
+  /* 3 x 480-560px blur(70px) blobs animated forever (26s/32s/38s) dominate
+     compositing on a phone. They are pure ambient decoration. */
+  .aurora { display: none !important; }
+  .login-blob, .login-blob-1, .login-blob-2 { display: none !important; }
+
+  /* backdrop-filter re-blurs the whole viewport every frame (bottom nav and
+     the expanded drawer). A solid surface is cheaper and just as readable. */
+  .rail {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: var(--surface) !important;
+  }
+
+  /* Infinite decorative glow on the logo; one-shot animations are kept. */
+  .rail-logo { animation: none !important; }
+
+  /* Width / padding transitions animate LAYOUT every frame. On phones the
+     drawer slides in with a transform keyframe (compositor-only) instead. */
+  .sentinel-rail { transition: none !important; }
+  .app-shell { transition: none !important; }
+}

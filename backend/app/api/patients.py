@@ -1,6 +1,6 @@
 import os
 import re
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
@@ -14,22 +14,19 @@ from app.core.dependencies import get_current_user, require_role
 from app.core.input_validator import validate_file_upload
 from app.core.location import user_timezone
 from app.core.password_validator import PasswordPolicy
-from app.core.rbac import can_access_patient as _can_access_patient
-from app.core.security import hash_password
-from app.core.structured_errors import ErrorCode, err
+from app.core.rbac import owns_or_psych as _owns_or_psych
+from app.core.security import hash_password, verify_password
 from app.events import get_event_bus
 from app.ml.crisis_policy import CRISIS_POLICY
 from app.models.ai_analysis import AIAnalysis
-from app.models.booking import Booking
 from app.models.crisis import CrisisState
 from app.models.journal import JournalEntry
 from app.models.mood import MoodLog
 from app.models.ring import RingSensorLog
 from app.models.risk_assessment import RiskAssessment
+from app.models.sensor_reading import SensorReading
 from app.models.user import User
 from app.repositories import BookingRepository, FollowupRepository, JournalRepository, PatientRepository
-from app.schemas.auth import DoctorCreateClientRequest
-from app.services.audit import log_audit
 from app.services.patient_context import recent_patient_context
 from app.services.plain_insights import generate_plain_insights
 from app.services.timeline_service import build_timeline_events, compute_change_metrics
@@ -55,9 +52,6 @@ def get_me(user: User = Depends(require_role("patient", "psychologist")), db: Se
             "timezone": user.timezone or "",
             "clinic": user.clinic_code or "",
             "professional_code": user.professional_code or "",
-            "license_number": user.license_number or "",
-            "email": user.email or "",
-            "email_verified": bool(user.email_verified_at),
             "occupation": user.occupation or "",
             "contact_info": user.contact_info or "",
             "trusted_contact": user.trusted_contact or "",
@@ -72,11 +66,11 @@ def get_me(user: User = Depends(require_role("patient", "psychologist")), db: Se
 @router.get("/{username}/profile")
 def get_patient_profile(username: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if user.role != "psychologist" and user.username != username:
-        raise err(status.HTTP_403_FORBIDDEN, ErrorCode.FORBIDDEN, "Access denied")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     repo = PatientRepository(db)
     user = repo.get_by_username(username)
     if not user:
-        raise err(404, ErrorCode.PATIENT_NOT_FOUND, "Patient not found")
+        raise HTTPException(status_code=404, detail="Patient not found")
     return ok(
         data={
             "username": user.username,
@@ -89,8 +83,8 @@ def get_patient_profile(username: str, user: User = Depends(get_current_user), d
 
 @router.get("/{username}/summary")
 def get_patient_summary(username: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if not _can_access_patient(username, user, db):
-        raise err(status.HTTP_403_FORBIDDEN, ErrorCode.FORBIDDEN, "Access denied")
+    if not _owns_or_psych(username, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
     journal_repo = JournalRepository(db)
     journals = journal_repo.get_by_patient(username, limit=10)
     moods = (
@@ -341,10 +335,10 @@ def get_patient_overview(username: str, user: User = Depends(get_current_user), 
     """
     patient = PatientRepository(db).get_by_username(username)
     if not patient:
-        raise err(404, ErrorCode.PATIENT_NOT_FOUND, "Patient not found")
+        raise HTTPException(status_code=404, detail="Patient not found")
 
-    if not _can_access_patient(username, user, db):
-        raise err(status.HTTP_403_FORBIDDEN, ErrorCode.FORBIDDEN, "Access denied")
+    if not _owns_or_psych(username, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     ctx = recent_patient_context(db, username, journal_limit=10, mood_limit=14, ring_limit=7, include_followups=True)
 
@@ -513,9 +507,9 @@ def get_plain_insights(username: str, user: User = Depends(get_current_user), db
 
     patient = PatientRepository(db).get_by_username(username)
     if not patient:
-        raise err(404, ErrorCode.PATIENT_NOT_FOUND, "Patient not found")
-    if not _can_access_patient(username, user, db):
-        raise err(status.HTTP_403_FORBIDDEN, ErrorCode.FORBIDDEN, "Access denied")
+        raise HTTPException(status_code=404, detail="Patient not found")
+    if not _owns_or_psych(username, user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     ctx = recent_patient_context(db, username, journal_limit=10, mood_limit=14, ring_limit=7, include_followups=True)
     metrics = compute_change_metrics(username, db)
@@ -636,6 +630,83 @@ def update_contact(update: ContactUpdate, user: User = Depends(get_current_user)
     return ok(message="Updated")
 
 
+class ProfileUpdate(BaseModel):
+    name: str
+    clinic: str = ""
+    occupation: str = ""
+
+
+@router.put("/me/profile")
+def update_profile(
+    update: ProfileUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Edit the logged-in account's own identity fields (name, clinic, occupation).
+
+    Additive endpoint. Username and role are deliberately NOT editable here:
+    they are the account key and the authorization boundary. Everything is
+    keyed to the JWT subject, so no other account's data is ever touched.
+    """
+    name = update.name.strip()
+    clinic = update.clinic.strip()
+    occupation = update.occupation.strip()
+    if len(name) < 2 or not re.search(r"[A-Za-z]", name):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Name must be at least 2 characters and contain a letter",
+        )
+    if max(len(name), len(clinic), len(occupation)) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Profile fields must be 100 characters or fewer",
+        )
+    repo = PatientRepository(db)
+    db_user = repo.get_by_username(user.username)
+    if db_user:
+        db_user.name = name
+        db_user.clinic_code = clinic
+        db_user.occupation = occupation
+        db.commit()
+        get_event_bus().emit("patient:profile_updated", username=user.username)
+    return ok(message="Updated")
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.put("/me/password")
+def change_password(
+    update: PasswordChange,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Change the logged-in account's own password after verifying the current one.
+
+    Additive and self-scoped: no other account is affected, and no unauthenticated
+    reset path is exposed (there is no email service on this deployment).
+    """
+    repo = PatientRepository(db)
+    db_user = repo.get_by_username(user.username)
+    if not db_user or not verify_password(update.current_password, db_user.password_hash or ""):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect",
+        )
+    PasswordPolicy.validate_strict(update.new_password)
+    if verify_password(update.new_password, db_user.password_hash or ""):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from the current one",
+        )
+    db_user.password_hash = hash_password(update.new_password)
+    db.commit()
+    get_event_bus().emit("patient:password_changed", username=user.username)
+    return ok(message="Password updated")
+
+
 class PreferencesUpdate(BaseModel):
     country: str
     timezone: str
@@ -672,188 +743,89 @@ def update_onboarding(update: OnboardingUpdate, user: User = Depends(get_current
     return ok(data={"step": update.step}, message="Updated")
 
 
-@router.get("/me/streaks")
-def get_streaks(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Daily check-in streak: a "check-in" = any journal entry or mood log that day.
+def _ring_vitals(db: Session, username: str) -> dict:
+    """Real wearable vitals + sync metadata for one patient.
 
-    Current streak counts back from today; if nothing yet today, the streak is
-    still alive from yesterday (the day isn't over). Also returns the last 28
-    days as a compact heatmap the dashboard can render.
-
-    Timezone note: journals store UTC timestamps while mood rows carry
-    client-supplied dates. Journal timestamps are normalized to the server's
-    local calendar so both sources agree on what "today" means.
+    A single push may contain only SOME signals (e.g. SpO2/HRV without bpm), so
+    report the most recent genuinely measured value PER signal rather than
+    blindly using the newest (possibly partial) row. Nothing is invented: a
+    signal never measured stays None, and a patient with no rows gets ring=None.
     """
-    from datetime import date, datetime, timedelta
-
-    local_today = date.today()
-    cutoff_dt = local_today - timedelta(days=400)
-    cutoff = cutoff_dt.isoformat()
-
-    def _utc_ts_to_local_date(ts: str) -> str:
-        try:
-            return datetime.fromisoformat(ts).astimezone().date().isoformat()
-        except (ValueError, TypeError, OSError):
-            return ts[:10]
-
-    journal_dates = {
-        _utc_ts_to_local_date(row[0])
-        for row in db.query(JournalEntry.timestamp)
-        .filter(JournalEntry.patient_username == user.username, JournalEntry.timestamp >= cutoff)
+    recent_rows = (
+        db.query(RingSensorLog)
+        .filter(RingSensorLog.patient_username == username)
+        .order_by(RingSensorLog.logged_at.desc())
+        .limit(50)
         .all()
-        if row[0]
-    }
-    mood_dates = {
-        row[0]
-        for row in db.query(MoodLog.date)
-        .filter(MoodLog.patient_username == user.username, MoodLog.date >= cutoff)
-        .all()
-        if row[0]
-    }
-    checkins = journal_dates | mood_dates
-
-    # Current streak: walk back day by day from today (or yesterday if today is
-    # not checked in yet — the day isn't over).
-    current = 0
-    cursor = local_today if local_today.isoformat() in checkins else local_today - timedelta(days=1)
-    while cursor.isoformat() in checkins:
-        current += 1
-        cursor -= timedelta(days=1)
-
-    # Longest streak across the whole window.
-    longest = 0
-    run = 0
-    prev = None
-    for d in sorted(checkins):
-        try:
-            cur = date.fromisoformat(d)
-        except ValueError:
-            continue
-        run = run + 1 if (prev and (cur - prev).days == 1) else 1
-        longest = max(longest, run)
-        prev = cur
-
-    heatmap = [
-        {
-            "date": (local_today - timedelta(days=offset)).isoformat(),
-            "checked": (local_today - timedelta(days=offset)).isoformat() in checkins,
-        }
-        for offset in range(27, -1, -1)
-    ]
-
-    return ok(
-        data={
-            "current_streak": current,
-            "longest_streak": longest,
-            "checked_in_today": local_today.isoformat() in checkins,
-            "heatmap": heatmap,
-        }
     )
+    ring_data = recent_rows[0] if recent_rows else None
+
+    def latest(field: str):
+        return next((getattr(r, field) for r in recent_rows if getattr(r, field) is not None), None)
+
+    # Only surface vitals that were genuinely recorded. Unmeasured fields stay
+    # null so the UI shows "—" rather than inventing a number.
+    ring_payload = None
+    if ring_data:
+        readings = (
+            db.query(SensorReading)
+            .filter(SensorReading.patient_username == username)
+            .order_by(SensorReading.logged_at.desc())
+            .limit(50)
+            .all()
+        )
+        temperature = next((r.temperature for r in readings if r.temperature is not None), None)
+        ring_payload = {
+            "bpm": latest("bpm"),
+            "stress": latest("stress"),
+            "sleep": latest("sleep_hours"),
+            "spo2": latest("spo2"),
+            "hrv": latest("hrv"),
+            "temperature": temperature,
+            "device_id": ring_data.device_id,
+            "logged_at": ring_data.logged_at,
+            "source": "wearable",
+        }
+
+    last_synced = ring_data.logged_at if ring_data else None
+    # A sync is "due" when there are no readings or the newest is >24h old.
+    sync_due = True
+    if last_synced:
+        try:
+            ts = datetime.fromisoformat(last_synced)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            sync_due = datetime.now(UTC) - ts > timedelta(hours=24)
+        except (ValueError, TypeError):
+            sync_due = True
+
+    return {
+        "ring": ring_payload,
+        "last_synced": last_synced,
+        "sync_due": sync_due,
+        "reading_count": len(recent_rows),
+    }
 
 
-@router.get("/me/week-summary")
-def get_week_summary(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """A gentle week-in-review for the patient's own dashboard.
+@router.get("/{username}/vitals")
+def get_patient_vitals(username: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Real wearable vitals for a patient, for their ASSIGNED psychologist.
 
-    Counts vs the previous week, top emotions this week, the best day,
-    and upcoming confirmed sessions — all the patient's own data, no
-    clinical-only fields.
+    Read-only, same data shape as /patients/me/wellness. Never invents values:
+    a patient with no ring rows returns ring=None with sync_due=true.
     """
-    from datetime import timedelta
-
-    now = datetime.now(UTC)
-    week_ago = (now - timedelta(days=7)).isoformat()
-    two_weeks_ago = (now - timedelta(days=14)).isoformat()
-
-    def _count(model, ts_col, since):
-        return db.query(model).filter(model.patient_username == user.username, ts_col >= since).count()
-
-    journals_7 = _count(JournalEntry, JournalEntry.timestamp, week_ago)
-    journals_prev = (
-        db.query(JournalEntry)
-        .filter(
-            JournalEntry.patient_username == user.username,
-            JournalEntry.timestamp >= two_weeks_ago,
-            JournalEntry.timestamp < week_ago,
-            JournalEntry.deleted_at.is_(None),
-        )
-        .count()
-    )
-    moods_7 = _count(MoodLog, MoodLog.timestamp, week_ago)
-    moods_prev = (
-        db.query(MoodLog)
-        .filter(
-            MoodLog.patient_username == user.username, MoodLog.timestamp >= two_weeks_ago, MoodLog.timestamp < week_ago
-        )
-        .count()
-    )
-
-    week_moods = (
-        db.query(MoodLog).filter(MoodLog.patient_username == user.username, MoodLog.timestamp >= week_ago).all()
-    )
-    best = max(week_moods, key=lambda m: m.date, default=None)  # placeholder, replaced below
-    positive = [m for m in week_moods if (m.label or "").lower() in ("good", "great")]
-    best = positive[-1] if positive else None
-
-    # Top emotions from this week's journals
-    emotion_counts: dict[str, int] = {}
-    week_journals = (
-        db.query(JournalEntry)
-        .filter(
-            JournalEntry.patient_username == user.username,
-            JournalEntry.timestamp >= week_ago,
-            JournalEntry.deleted_at.is_(None),
-        )
-        .all()
-    )
-    for j in week_journals:
-        for e in (j.emotions or "").split(","):
-            e = e.strip().lower()
-            if e and e != "neutral":
-                emotion_counts[e] = emotion_counts.get(e, 0) + 1
-    top_emotions = [e for e, _ in sorted(emotion_counts.items(), key=lambda kv: kv[1], reverse=True)[:3]]
-
-    next_session_row = (
-        db.query(Booking)
-        .filter(
-            Booking.patient_username == user.username,
-            Booking.status == "Approved",
-            Booking.date >= now.date().isoformat(),
-        )
-        .order_by(Booking.date, Booking.time)
-        .first()
-    )
-
-    checkins = journals_7 + moods_7
-    prev_checkins = journals_prev + moods_prev
-    trend = "up" if checkins > prev_checkins else "down" if checkins < prev_checkins else "flat"
-
-    return ok(
-        data={
-            "journals_7d": journals_7,
-            "journals_prev": journals_prev,
-            "moods_7d": moods_7,
-            "checkins_7d": checkins,
-            "checkins_prev": prev_checkins,
-            "trend": trend,
-            "positive_days": len(positive),
-            "best_day": {"date": best.date, "label": best.label, "emoji": best.emoji} if best else None,
-            "top_emotions": top_emotions,
-            "next_session": {"date": next_session_row.date, "time": next_session_row.time}
-            if next_session_row
-            else None,
-        }
-    )
+    patient = PatientRepository(db).get_by_username(username)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    if user.username != username and (user.role != "psychologist" or patient.assigned_psych != user.username):
+        raise HTTPException(status_code=403, detail="Access denied")
+    return ok(data={"patient_username": username, "patient_name": patient.name, **_ring_vitals(db, username)})
 
 
 @router.get("/me/wellness")
 def get_wellness(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    ring_data = (
-        db.query(RingSensorLog)
-        .filter(RingSensorLog.patient_username == user.username)
-        .order_by(RingSensorLog.logged_at.desc())
-        .first()
-    )
+    vitals = _ring_vitals(db, user.username)
+
     moods = (
         db.query(MoodLog)
         .filter(MoodLog.patient_username == user.username)
@@ -879,15 +851,10 @@ def get_wellness(user: User = Depends(get_current_user), db: Session = Depends(g
 
     return ok(
         data={
-            "ring": {
-                "bpm": ring_data.bpm if ring_data else 0,
-                "stress": ring_data.stress if ring_data else 0,
-                "sleep": ring_data.sleep_hours if ring_data else 0,
-                "spo2": ring_data.spo2 if ring_data else 0,
-                "hrv": ring_data.hrv if ring_data else 0,
-            }
-            if ring_data
-            else None,
+            "ring": vitals["ring"],
+            "last_synced": vitals["last_synced"],
+            "sync_due": vitals["sync_due"],
+            "reading_count": vitals["reading_count"],
             "mood": today_mood,
             "journals_today": journals_today,
             "mood_trend": [{"date": m.date, "emoji": m.emoji, "label": m.label} for m in moods[:7]],
@@ -920,172 +887,10 @@ def assign_psychologist(
     repo = PatientRepository(db)
     patient = repo.get_by_username(username)
     if not patient:
-        raise err(404, ErrorCode.PATIENT_NOT_FOUND, "Patient not found")
+        raise HTTPException(status_code=404, detail="Patient not found")
     patient.assigned_psych = psych_username
     db.commit()
     get_event_bus().emit(
         "patient:psych_assigned", patient_username=username, psych=psych_username, assigned_by=user.username
     )
     return ok(message=f"Assigned {psych_username} to {username}")
-
-
-class ClientUpdate(BaseModel):
-    """Editable client account fields (psychologist/admin editing a patient)."""
-
-    name: str | None = None
-    dob: str | None = None
-    country: str | None = None
-    timezone: str | None = None
-    occupation: str | None = None
-    contact_info: str | None = None
-    trusted_contact: str | None = None
-    assigned_psych: str | None = None
-    password: str | None = None
-
-
-@router.put("/{username}/account")
-def update_client_account(
-    username: str,
-    update: ClientUpdate,
-    user: User = Depends(require_role("psychologist", "admin")),
-    db: Session = Depends(get_db),
-):
-    """Edit a client's account details — name, DOB, contact, assignment, password.
-    Admins may edit anyone; psychologists only clients assigned to them."""
-    repo = PatientRepository(db)
-    patient = repo.get_by_username(username)
-    if not patient or patient.is_deleted:
-        raise err(404, ErrorCode.PATIENT_NOT_FOUND, "Client not found")
-    if user.role != "admin" and patient.assigned_psych != user.username:
-        raise err(403, ErrorCode.NOT_ASSIGNED, "This client is not assigned to you")
-
-    changes: list[str] = []
-    if update.name is not None and update.name.strip():
-        if update.name.strip() != patient.name:
-            patient.name = update.name.strip()
-            changes.append("name")
-    if update.dob is not None:
-        if update.dob.strip() and patient.dob != update.dob.strip():
-            patient.dob = update.dob.strip()
-            changes.append("date of birth")
-    if update.country is not None and patient.country != update.country.strip():
-        patient.country = update.country.strip()
-        patient.timezone = user_timezone(update.country.strip(), update.timezone or "")
-        changes.append("country")
-    elif update.timezone is not None and update.timezone.strip() and patient.timezone != update.timezone.strip():
-        patient.timezone = update.timezone.strip()
-        changes.append("timezone")
-    if update.occupation is not None and patient.occupation != update.occupation.strip():
-        patient.occupation = update.occupation.strip()
-        changes.append("occupation")
-    if update.contact_info is not None and update.contact_info.strip():
-        if not _is_valid_email(update.contact_info):
-            raise err(400, ErrorCode.VALIDATION_ERROR, "Contact email is not valid")
-        patient.contact_info = update.contact_info.strip()
-        changes.append("contact email")
-    if update.trusted_contact is not None and update.trusted_contact.strip():
-        if not _is_valid_email(update.trusted_contact):
-            raise err(
-                400, ErrorCode.VALIDATION_ERROR, "Trusted contact must be a valid email (used in crisis escalation)"
-            )
-        patient.trusted_contact = update.trusted_contact.strip()
-        changes.append("trusted contact")
-    if update.assigned_psych is not None:
-        ap = update.assigned_psych.strip()
-        if ap and ap != patient.assigned_psych:
-            psych = repo.get_by_username(ap)
-            if not psych or psych.role != "psychologist" or psych.is_deleted:
-                raise err(400, ErrorCode.VALIDATION_ERROR, "Target psychologist does not exist")
-            patient.assigned_psych = ap
-            changes.append("assigned psychologist")
-        elif not ap and patient.assigned_psych:
-            patient.assigned_psych = ""
-            changes.append("assigned psychologist (cleared)")
-    if update.password:
-        if len(update.password) < 4:
-            raise err(400, ErrorCode.PASSWORD_TOO_WEAK, "Password must be at least 4 characters")
-        from app.core.security import hash_password
-
-        patient.password_hash = hash_password(update.password)
-        changes.append("password")
-
-    if not changes:
-        return ok(message="No changes")
-    patient.updated_at = datetime.now(UTC).isoformat()
-    db.commit()
-    log_audit(
-        action="client_account_updated",
-        user=user.username,
-        role=user.role,
-        resource="patient",
-        resource_id=username,
-        details="updated: " + ", ".join(changes),
-        db=db,
-    )
-    get_event_bus().emit("patient:account_updated", patient_username=username, by=user.username, changes=changes)
-    return ok(message="Updated: " + ", ".join(changes))
-
-
-@router.post("/create-client")
-def doctor_creates_client(
-    req: DoctorCreateClientRequest,
-    user: User = Depends(require_role("psychologist", "admin")),
-    db: Session = Depends(get_db),
-):
-    """Doctor provisions a client account in-clinic (the client may not have
-    an email or device yet). The account is created under the doctor's clinic
-    and auto-assigned to the doctor (admins pick themselves too — reassignment
-    is available via the account editor)."""
-    import os as _os
-
-    repo = PatientRepository(db)
-    if repo.get_by_username(req.username):
-        raise err(400, ErrorCode.USERNAME_TAKEN, "Username taken")
-    if req.contact_info:
-        existing_contact = (
-            db.query(User).filter(User.contact_info == req.contact_info, User.deleted_at.is_(None)).first()
-        )
-        if existing_contact:
-            raise err(400, ErrorCode.DUPLICATE_RESOURCE, "That contact email is already on another account")
-
-    pw_errors = PasswordPolicy.validate(req.password)
-    if pw_errors:
-        raise err(400, ErrorCode.PASSWORD_TOO_WEAK, "; ".join(pw_errors))
-    if len(req.password) < 4:
-        raise err(400, ErrorCode.PASSWORD_TOO_WEAK, "Password must be at least 4 characters")
-
-    client = User(
-        username=req.username,
-        password_hash=hash_password(req.password),
-        name=req.name.strip(),
-        role="patient",
-        dob=req.dob,
-        country=req.country.strip(),
-        timezone=user_timezone(req.country.strip(), req.timezone),
-        occupation=req.occupation,
-        clinic_code=user.clinic_code or "",
-        assigned_psych=user.username,
-        contact_info=req.contact_info,
-        onboarding_step=0,
-        encryption_salt=_os.urandom(16).hex(),
-        created_at=datetime.now(UTC).isoformat(),
-    )
-    db.add(client)
-    db.commit()
-    log_audit(
-        action="client_created_by_clinician",
-        user=user.username,
-        role=user.role,
-        resource="patient",
-        resource_id=req.username,
-        db=db,
-    )
-    get_event_bus().emit("patient:created", patient_username=req.username, by=user.username)
-    return ok(
-        data={
-            "username": req.username,
-            "clinic": client.clinic_code,
-            "assigned_psych": client.assigned_psych,
-        },
-        message="Client account created",
-    )

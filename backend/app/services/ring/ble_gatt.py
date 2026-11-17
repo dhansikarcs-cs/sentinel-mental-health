@@ -57,11 +57,21 @@ def uint16_le(data: bytes) -> int:
 
 
 def parse_hrm(data: bytes) -> dict:
-    """Parse a standard BLE Heart Rate Measurement value."""
+    """Parse a standard BLE Heart Rate Measurement value.
+
+    Returns an empty dict when there is no genuine measurement (e.g. the
+    sensor-contact flag says the ring is not worn), so no fake bpm is stored.
+    """
     if not data:
-        return {"bpm": 0}
+        return {}
     flags = data[0]
-    bpm = int.from_bytes(data[1:3], "little") if flags & 1 else data[1]
+    if flags & 0x04 and not (flags & 0x02):
+        return {}  # sensor contact NOT detected - not a real reading
+    if len(data) < 2:
+        return {}
+    bpm = int.from_bytes(data[1:3], "little") if (flags & 1) and len(data) >= 3 else data[1]
+    if not (30 <= bpm <= 250):
+        return {}
     return {"bpm": bpm}
 
 
@@ -131,14 +141,13 @@ class BLEGATTRingSource(RingSource):
             raw = self._read_characteristic(uuid)
             parsed = self.parse_characteristic(uuid, raw)
             if metric in ("bpm", "hrv", "stress", "spo2", "sleep_hours"):
-                reading[metric] = parsed.get(metric, 0)
+                if metric in parsed:  # only store genuinely measured values
+                    reading[metric] = parsed[metric]
             else:
                 reading.update(parsed)
-        battery = 0
         try:
             raw_battery = self._read_characteristic(self.battery_uuid)
-            battery = uint8(raw_battery)
+            reading["battery"] = uint8(raw_battery)
         except Exception:
-            pass
-        reading["battery"] = battery
+            pass  # battery unmeasured -> stays NULL
         return SensorData.from_dict(reading, device_id=self.device_id)

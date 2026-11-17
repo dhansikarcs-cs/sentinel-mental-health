@@ -14,14 +14,10 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import (
     activity,
-    agent_chat,
     agents,
     ai_analyses,
-    ai_features,
-    ai_insights,
     auth,
     bookings,
-    coping_tools,
     crisis,
     discrepancy,
     emotion_results,
@@ -29,9 +25,7 @@ from app.api import (
     event_store_api,
     export_data,
     feature_flags_api,
-    followup_templates,
     followups,
-    invites,
     journal,
     ml_registry,
     mood,
@@ -44,7 +38,6 @@ from app.api import (
     risk_assessments,
     search_api,
     sensor_readings,
-    session_reports,
     sync_api,
     timeline,
     triage,
@@ -76,7 +69,6 @@ def _ensure_columns():
     for table, columns in {
         "notifications": ["recipient_username"],
         "followups": ["grade_updated_at", "feedback_updated_at"],
-        "coping_tool": ["recommended_by"],
     }.items():
         existing = {c["name"] for c in inspector.get_columns(table)}
         for col in columns:
@@ -86,42 +78,10 @@ def _ensure_columns():
                 logger.info("Added missing column %s.%s", table, col)
 
 
-def _ensure_ai_provider_constraint():
-    """Recreate ck_ai_provider to permit Azure once the constraint gained a provider.
-
-    The original constraint only allowed ('rule', 'ollama', 'groq', 'pending'),
-    so any journal analyzed via Azure raised IntegrityError on insert even though
-    the summary itself was saved. Recreate it including 'azure' on existing DBs.
-    """
-    from sqlalchemy import inspect, text
-
-    inspector = inspect(engine)
-    try:
-        check_constraints = inspector.get_check_constraints("ai_analyses")
-    except Exception:
-        return  # SQLite/older drivers: table or query may not be available
-    ck = next((c for c in check_constraints if c.get("name") == "ck_ai_provider"), None)
-    if ck is None:
-        return
-    sqltext = (ck.get("sqltext") or "").lower()
-    if "azure" in sqltext:
-        return
-    with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE ai_analyses DROP CONSTRAINT ck_ai_provider"))
-        conn.execute(
-            text(
-                "ALTER TABLE ai_analyses ADD CONSTRAINT ck_ai_provider "
-                "CHECK (provider IN ('rule', 'ollama', 'groq', 'azure', 'pending'))"
-            )
-        )
-    logger.info("Recreated ck_ai_provider to allow provider='azure'")
-
-
 def _init_db():
     os.makedirs("data", exist_ok=True)
     Base.metadata.create_all(bind=engine)
     _ensure_columns()
-    _ensure_ai_provider_constraint()
 
 
 @asynccontextmanager
@@ -199,22 +159,10 @@ async def validation_handler(request: Request, exc: RequestValidationError):
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     rid = getattr(request.state, "request_id", "")
-    # ApiError (raise err(...)) carries its own explicit code — use it verbatim.
-    custom_code = getattr(exc, "error_code", None)
-    if custom_code:
-        return JSONResponse(
-            status_code=exc.status_code,
-            content=make_error(custom_code, str(exc.detail), rid, details=getattr(exc, "details", None) or None),
-            headers=exc.headers or None,
-        )
     code_map = {
-        400: ErrorCode.VALIDATION_ERROR,
         404: ErrorCode.NOT_FOUND,
         401: ErrorCode.UNAUTHORIZED,
         403: ErrorCode.FORBIDDEN,
-        409: ErrorCode.CONFLICT,
-        413: ErrorCode.REQUEST_ENTITY_TOO_LARGE,
-        422: ErrorCode.VALIDATION_ERROR,
         429: ErrorCode.RATE_LIMITED,
     }
     return JSONResponse(
@@ -238,25 +186,20 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # ── API v1 versioned router ──────────────────────────────────────
 v1_router = APIRouter(prefix="/api")
+
 v1_router.include_router(auth.router)
 v1_router.include_router(patients.router)
-v1_router.include_router(invites.router)
 v1_router.include_router(psychologists.router)
 v1_router.include_router(journal.router)
 v1_router.include_router(mood.router)
 v1_router.include_router(crisis.router)
-v1_router.include_router(coping_tools.router)
 v1_router.include_router(bookings.router)
 v1_router.include_router(followups.router)
-v1_router.include_router(followup_templates.router)
 v1_router.include_router(ring.router)
 v1_router.include_router(timeline.router)
 v1_router.include_router(ws.router)
 v1_router.include_router(discrepancy.router)
 v1_router.include_router(agents.router)
-v1_router.include_router(ai_features.router)
-v1_router.include_router(agent_chat.router)
-v1_router.include_router(ai_insights.router)
 v1_router.include_router(triage.router)
 v1_router.include_router(activity.router)
 v1_router.include_router(export_data.router)
@@ -270,7 +213,6 @@ v1_router.include_router(risk_assessments.router)
 v1_router.include_router(notifications.router)
 v1_router.include_router(ml_registry.router)
 v1_router.include_router(event_store_api.router)
-v1_router.include_router(session_reports.router)
 v1_router.include_router(feature_flags_api.router)
 v1_router.include_router(search_api.router)
 v1_router.include_router(sync_api.router)

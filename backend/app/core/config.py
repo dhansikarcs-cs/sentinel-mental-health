@@ -20,25 +20,6 @@ class Settings(BaseSettings):
 
     groq_api_key: str = ""
 
-    # Azure AI Foundry / Azure OpenAI (model-router style endpoint).
-    # endpoint: https://<resource>.services.ai.azure.com (Foundry)
-    #           or https://<resource>.openai.azure.com (classic Azure OpenAI)
-    # deployment: the MODEL or DEPLOYMENT name your resource exposes
-    # api_version: only used for the classic openai.azure.com path
-    azure_ai_endpoint: str = ""
-    azure_ai_key: str = ""
-    azure_deployment: str = "gpt-4o-mini"
-
-    # Azure AI Foundry hosted AGENT (e.g. "Sentinelagent") — called via the
-    # Responses API with an agent_reference. Auth: DefaultAzureCredential
-    # (managed identity on App Service, `az login` locally) or AZURE_AI_KEY.
-    azure_agent_endpoint: str = ""  # https://<res>.services.ai.azure.com/api/projects/<project>
-    azure_agent_name: str = ""
-    azure_agent_version: str = ""  # pin a version, or empty for latest
-    azure_agent_mode: str = "auto"  # auto (after local Ollama) | on (first) | off
-    azure_api_version: str = "2024-10-21"
-    azure_max_tokens: int = 512
-
     allow_cloud_ai: bool = False
 
     trustee_link_secret: str = ""
@@ -51,9 +32,6 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     email_from: str = "sentinel@example.com"
     crisis_helpline_email: str = ""
-
-    resend_api_key: str = ""
-    resend_from: str = ""
 
     cors_origins: str = "http://localhost:5173"
     cookie_secure: bool = False
@@ -86,9 +64,7 @@ class Settings(BaseSettings):
     db_pool_pre_ping: bool = True
 
     class Config:
-        # Load the repo-root .env (docker-compose convention) AND backend/.env
-        # (per-app overrides) — backend/.env wins when a key appears in both.
-        env_file = ("../.env", ".env")
+        env_file = "../.env"
         env_file_encoding = "utf-8"
         extra = "ignore"
 

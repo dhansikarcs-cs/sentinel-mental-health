@@ -16,10 +16,7 @@ services:
   sentinel-frontend:
     build: ./frontend
     ports:
-      - "5173:10000"
-    environment:
-      - PORT=10000
-      - BACKEND_URL=http://sentinel-backend:8000
+      - "5173:5173"
     depends_on:
       - sentinel-backend
     restart: unless-stopped

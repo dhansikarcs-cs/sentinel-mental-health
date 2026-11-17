@@ -112,11 +112,6 @@ export function todayStr(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
-// Placeholder sensor-series generator (was duplicated: Dashboard + PsychJournal).
-export function mockHistory(base: number, variance: number, len = 24): number[] {
-  return Array.from({ length: len }, (_, i) => Math.round(base + (Math.sin(i * 0.6) * variance) + (Math.random() - 0.5) * variance * 0.5))
-}
-
 // ── Crisis stage machine (was duplicated: Layout.tsx:167-184 ≈ CrisisPage.tsx:83-91) ──
 
 export const TRUSTED_DELAY = 30

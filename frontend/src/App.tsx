@@ -2,11 +2,10 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { isAuthenticated, fetchMe, getUser } from './stores/auth'
 import Layout from './components/Layout'
-import { ToastProvider } from './components/fx'
 import Login from './pages/Login'
 import Register from './pages/Register'
-import VerifyEmailPage from './pages/VerifyEmailPage'
 import Dashboard from './pages/Dashboard'
+import WearablesPage from './pages/WearablesPage'
 import JournalPage from './pages/JournalPage'
 import MoodPage from './pages/MoodPage'
 import CrisisPage from './pages/CrisisPage'
@@ -24,10 +23,8 @@ import OnboardingPage from './pages/OnboardingPage'
 import PsychOnboardingPage from './pages/PsychOnboardingPage'
 import TrusteePortalPage from './pages/TrusteePortalPage'
 import ActivityFeedPage from './pages/ActivityFeedPage'
-import AIHubPage from './pages/AIHubPage'
-import AdminConsolePage from './pages/AdminConsolePage'
-import GoalsPage from './pages/GoalsPage'
 import ErrorBoundary from './ErrorBoundary'
+import { ToastProvider } from './components/fx'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const authed = isAuthenticated()
@@ -57,23 +54,22 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
-      <Route path="/verify-email" element={<VerifyEmailPage />} />
       <Route path="/onboarding" element={<RequireAuth><OnboardingPage /></RequireAuth>} />
       <Route path="/psych-onboarding" element={<RequireAuth><PsychOnboardingPage /></RequireAuth>} />
       <Route path="/trustee" element={<TrusteePortalPage />} />
       <Route path="/activity" element={<RequireAuth><ErrorBoundary><Layout /></ErrorBoundary></RequireAuth>}>
         <Route index element={<ActivityFeedPage />} />
       </Route>
-      <Route element={<RequireAuth><ErrorBoundary><Layout /></ErrorBoundary></RequireAuth>}>
-        <Route path="/dashboard" element={<RequireRole roles={['patient', 'admin']}><Dashboard /></RequireRole>} />
+        <Route element={<RequireAuth><ErrorBoundary><Layout /></ErrorBoundary></RequireAuth>}>
+        <Route path="/dashboard" element={<RequireRole roles={['patient']}><Dashboard /></RequireRole>} />
+        {/* Own ring / self-care space, available to BOTH roles. */}
+        <Route path="/wearables" element={<RequireRole roles={['patient', 'psychologist']}><WearablesPage /></RequireRole>} />
         <Route path="/journal" element={<RequireRole roles={['patient']}><JournalPage /></RequireRole>} />
-        <Route path="/companion" element={<RequireRole roles={['patient']}><AIHubPage /></RequireRole>} />
         <Route path="/mood" element={<RequireRole roles={['patient']}><MoodPage /></RequireRole>} />
-        <Route path="/goals" element={<RequireRole roles={['patient']}><GoalsPage /></RequireRole>} />
         <Route path="/bookings" element={<BookingsPage />} />
         <Route path="/followups" element={<FollowupsPage />} />
         <Route path="/timeline" element={<RequireRole roles={['patient']}><TimelinePage /></RequireRole>} />
-        <Route path="/crisis" element={<RequireRole roles={['patient', 'psychologist', 'admin']}><CrisisPage /></RequireRole>} />
+        <Route path="/crisis" element={<RequireRole roles={['patient']}><CrisisPage /></RequireRole>} />
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/triage" element={<RequireRole roles={['psychologist']}><PsychTriagePage /></RequireRole>} />
         <Route path="/clinical-notes" element={<RequireRole roles={['psychologist']}><ClinicalNotesPage /></RequireRole>} />
@@ -81,7 +77,6 @@ export default function App() {
         <Route path="/patient-insights" element={<RequireRole roles={['psychologist']}><PatientInsightsPage /></RequireRole>} />
         <Route path="/psych-journal" element={<RequireRole roles={['psychologist']}><PsychJournalPage /></RequireRole>} />
         <Route path="/export" element={<RequireRole roles={['psychologist']}><ExportPage /></RequireRole>} />
-        <Route path="/admin" element={<RequireRole roles={['admin', 'psychologist']}><AdminConsolePage /></RequireRole>} />
       </Route>
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>

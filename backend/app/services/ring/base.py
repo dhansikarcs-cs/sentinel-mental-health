@@ -7,27 +7,38 @@ from datetime import UTC, datetime
 
 @dataclass
 class SensorData:
+    """A reading from a physical ring.
+
+    Every physiological field is optional: NULL means the device did not
+    measure it. No defaults, derived values, or invented numbers.
+    """
+
     device_id: str = ""
-    bpm: int = 72
-    stress: int = 35
-    sleep_hours: float = 7.0
-    spo2: float = 98.0
-    hrv: int = 50
+    bpm: int | None = None
+    stress: int | None = None
+    sleep_hours: float | None = None
+    spo2: float | None = None
+    hrv: int | None = None
     mood: str = ""
     timestamp: str = ""
 
     @classmethod
     def from_dict(cls, data: dict, device_id: str = "") -> "SensorData":
-        now = datetime.now(UTC).isoformat()
+        def opt_int(v):
+            return int(v) if v is not None else None
+
+        def opt_float(v):
+            return float(v) if v is not None else None
+
         return cls(
             device_id=data.get("device_id") or device_id,
-            bpm=int(data.get("bpm") or 72),
-            stress=int(data.get("stress") or 35),
-            sleep_hours=float(data.get("sleep_hours") or data.get("sleep") or 7.0),
-            spo2=float(data.get("spo2") or 98.0),
-            hrv=int(data.get("hrv") or 50),
+            bpm=opt_int(data.get("bpm")),
+            stress=opt_int(data.get("stress")),
+            sleep_hours=opt_float(data.get("sleep_hours") or data.get("sleep")),
+            spo2=opt_float(data.get("spo2")),
+            hrv=opt_int(data.get("hrv")),
             mood=str(data.get("mood") or ""),
-            timestamp=str(data.get("timestamp") or now),
+            timestamp=str(data.get("timestamp") or datetime.now(UTC).isoformat()),
         )
 
     def to_dict(self) -> dict:

@@ -16,11 +16,13 @@ class RingSensorLog(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     device_id = Column(String, default="")
     patient_username = Column(String, default="")
-    bpm = Column(Integer, default=0)
-    stress = Column(Integer, default=0)
-    sleep_hours = Column(Float, default=0)
-    spo2 = Column(Float, default=0)
-    hrv = Column(Integer, default=0)
+    # NULL means "not measured". No defaults: a column default would be applied
+    # to an explicit None and silently turn missing data back into a fake 0.
+    bpm = Column(Integer, nullable=True)
+    stress = Column(Integer, nullable=True)
+    sleep_hours = Column(Float, nullable=True)
+    spo2 = Column(Float, nullable=True)
+    hrv = Column(Integer, nullable=True)
     seq = Column(Integer, nullable=True)
     raw_json = Column(EncryptedText, default="")  # cloud envelope: device_id, seq, source readings, client timestamp
     logged_at = Column(String, nullable=False)

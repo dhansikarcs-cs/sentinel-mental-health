@@ -66,40 +66,8 @@ async function tryRefresh(): Promise<boolean> {
   }
 }
 
-// Retry transient failures so a free-tier cold-start blip (502/503/504 or a
-// dropped connection) self-heals instead of surfacing as an error. Reads are
-// always retried; writes are retried only on network-level failures (when the
-// server likely never received the request), never on HTTP errors.
-const RETRYABLE_STATUS = new Set([502, 503, 504])
-const MAX_ATTEMPTS = 3
-
-async function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function fetchWithRetry(url: string, init: RequestInit, method: string): Promise<Response> {
-  let lastErr: unknown = null
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    let res: Response
-    try {
-      res = await fetch(url, init)
-    } catch (err) {
-      lastErr = err
-      const retryNetwork = isNetworkError(err) && (method === 'GET' || method === 'HEAD')
-      if (attempt < MAX_ATTEMPTS && retryNetwork) {
-        await delay(500 * attempt)
-        continue
-      }
-      throw err
-    }
-    const retryHttp = res && RETRYABLE_STATUS.has(res.status) && method === 'GET'
-    if (attempt < MAX_ATTEMPTS && retryHttp) {
-      await delay(500 * attempt)
-      continue
-    }
-    return res
-  }
-  throw lastErr ?? new Error('Request failed after retries')
+function isColdStartStatus(status: number): boolean {
+  return status === 502 || status === 503 || status === 504
 }
 
 async function request(path: string, options: RequestInit = {}, isRetry = false): Promise<any> {
@@ -109,8 +77,25 @@ async function request(path: string, options: RequestInit = {}, isRetry = false)
   }
   if (_token) headers['Authorization'] = `Bearer ${_token}`
 
-  const method = options.method || 'GET'
-  const res = await fetchWithRetry(`${BASE}${path}`, { ...options, headers }, method)
+  // Render free tier sleeps; the first hit after idle can 502/hang while the
+  // instance boots (~30-60 s). Retry idempotent reads and login with backoff
+  // so a cold start never surfaces as an error to the user.
+  const method = (options.method || 'GET').toUpperCase()
+  const retryable = method === 'GET' || path === '/auth/login'
+  const maxAttempts = retryable ? 5 : 1
+  const delays = [2000, 5000, 10000, 15000, 20000]
+
+  let res: Response | null = null
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      res = await fetch(`${BASE}${path}`, { ...options, headers })
+      if (!isColdStartStatus(res.status)) break
+    } catch {
+      // network-level failure (connection reset during boot)
+    }
+    if (attempt < maxAttempts - 1) await new Promise((r) => setTimeout(r, delays[attempt]))
+  }
+  if (!res) throw new Error('Backend is waking up. Please retry in a moment.')
 
   if (res.status === 401 && !isRetry && path !== '/auth/refresh') {
     const refreshed = await tryRefresh()
@@ -126,7 +111,7 @@ async function request(path: string, options: RequestInit = {}, isRetry = false)
     const text = await res.text()
     try { data = JSON.parse(text) } catch { data = { detail: text || 'Request failed' } }
   } catch { data = { detail: 'Request failed' } }
-  if (!res.ok) throw new Error(data.detail || data.message || 'Request failed')
+  if (!res.ok) throw new Error(data.detail || data.message || `Request failed (${res.status})`)
   if (data?.success === true && data?.data !== undefined) return data.data
   return data
 }
@@ -181,62 +166,29 @@ export const api = {
   unlock: (passphrase: string) =>
     request('/auth/unlock', { method: 'POST', body: JSON.stringify({ passphrase }) }),
   encryptionStatus: () => request('/auth/encryption-status'),
-  verifyEmail: (token: string) => request(`/auth/verify-email?token=${encodeURIComponent(token)}`),
-  resendVerification: (username: string) =>
-    request('/auth/resend-verification', { method: 'POST', body: JSON.stringify({ username }) }),
-
-  // Admin invites (doctor signup codes)
-  listInvites: () => request('/admin/invites'),
-  createInvite: (data: { clinic_code: string; max_uses?: number; expires_in_days?: number }) =>
-    request('/admin/invites', { method: 'POST', body: JSON.stringify(data) }),
-  revokeInvite: (code: string) => request(`/admin/invites/${encodeURIComponent(code)}`, { method: 'DELETE' }),
-
-  // Doctor creates a client account in-clinic
-  createClientAccount: (data: any) => request('/patients/create-client', { method: 'POST', body: JSON.stringify(data) }),
 
   // Patients
   getMe: () => request('/patients/me'),
   updateContact: (data: any) => request('/patients/me/contact', { method: 'PUT', body: JSON.stringify(data) }),
   updatePreferences: (data: any) => request('/patients/me/preferences', { method: 'PUT', body: JSON.stringify(data) }),
+  updateProfile: (data: any) => request('/patients/me/profile', { method: 'PUT', body: JSON.stringify(data) }),
+  changePassword: (data: any) => request('/patients/me/password', { method: 'PUT', body: JSON.stringify(data) }),
   getPatientProfile: (username: string) => request(`/patients/${username}/profile`),
   getPatientSummary: (username: string) => request(`/patients/${username}/summary`),
   getPatientOverview: (username: string) => request(`/patients/${username}/overview`),
-  getStressSpikes: (username: string, days: number = 30) => request(`/physio/stress-spikes/${username}?days=${days}`),
   getPlainInsights: (username: string) => request(`/patients/${username}/plain-insights`),
   uploadConsentForm: (file: File) => upload('/patients/me/consent', file),
   getWellness: () => request('/patients/me/wellness'),
+  getPatientVitals: (username: string) => request(`/patients/${username}/vitals`),
   updateOnboarding: (step: number) => request('/patients/me/onboarding', { method: 'PUT', body: JSON.stringify({ step }) }),
   assignPsychologist: (username: string, psychUsername: string) =>
     request(`/patients/${username}/assign-psych`, { method: 'POST', body: JSON.stringify({ psych_username: psychUsername }) }),
 
   // Psychologists
   getPsychPatients: () => request('/psychologists/patients'),
-  getCaseloadHealth: () => request('/psychologists/caseload-health'),
   getAvailablePsychs: (clinic?: string) => request(`/psychologists/available${clinic ? `?clinic=${clinic}` : ''}`),
-  getPsychNotes: (filters?: { patient?: string; q?: string; date_from?: string; date_to?: string; approved?: string }) => {
-    const p = new URLSearchParams()
-    if (filters?.patient) p.set('patient', filters.patient)
-    if (filters?.q) p.set('q', filters.q)
-    if (filters?.date_from) p.set('date_from', filters.date_from)
-    if (filters?.date_to) p.set('date_to', filters.date_to)
-    if (filters?.approved) p.set('approved', filters.approved)
-    const qs = p.toString()
-    return request(`/psychologists/notes${qs ? `?${qs}` : ''}`)
-  },
+  getPsychNotes: () => request('/psychologists/notes'),
   createPsychNote: (data: any) => request('/psychologists/notes', { method: 'POST', body: JSON.stringify(data) }),
-  updatePsychNote: (id: number, data: { raw_notes: string }) => request(`/psychologists/notes/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-
-  // Session reports (clinician one-page reports)
-  getReports: (patient: string) => request(`/session-reports?patient=${encodeURIComponent(patient)}`),
-  getReport: (id: number) => request(`/session-reports/${id}`),
-  createReport: (data: any) => request('/session-reports', { method: 'POST', body: JSON.stringify(data) }),
-  updateReport: (id: number, data: any) => request(`/session-reports/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  deleteReport: (id: number) => request(`/session-reports/${id}`, { method: 'DELETE' }),
-  approveReport: (id: number) => request(`/session-reports/${id}/approve`, { method: 'PUT' }),
-  uploadReportFile: (id: number, file: File) => upload(`/session-reports/${id}/upload`, file),
-  getReportAttachmentUrl: (id: number) => `${BASE}/session-reports/${id}/attachment`,
-  downloadReportExport: (id: number, filename: string) => api.downloadExport(`/session-reports/${id}/export`, filename),
-  downloadReportAttachment: (id: number, filename: string) => api.downloadExport(`/session-reports/${id}/attachment`, filename),
 
   // Journal
   getJournalPrompts: () => request('/journal/prompts'),
@@ -251,15 +203,7 @@ export const api = {
       throw err
     }
   },
-  getJournals: (filters?: { emotion?: string; ai_source?: string; date_from?: string; date_to?: string }) => {
-    const p = new URLSearchParams()
-    if (filters?.emotion) p.set('emotion', filters.emotion)
-    if (filters?.ai_source) p.set('ai_source', filters.ai_source)
-    if (filters?.date_from) p.set('date_from', filters.date_from)
-    if (filters?.date_to) p.set('date_to', filters.date_to)
-    const qs = p.toString()
-    return request(`/journal${qs ? `?${qs}` : ''}`)
-  },
+  getJournals: () => request('/journal'),
   getPatientJournals: (username: string) => request(`/journal/${username}`),
   getPatientSummaries: (username: string) => request(`/journal/${username}/summaries`),
   resummarizeJournal: (journalId: number) => request(`/journal/${journalId}/resummarize`, { method: 'POST' }),
@@ -280,7 +224,6 @@ export const api = {
   getMoods: () => request('/mood'),
   getPatientMoods: (username: string) => request(`/mood/${username}`),
   checkTodayMood: () => request('/mood/today/check'),
-  getStreaks: () => request('/patients/me/streaks'),
 
   // Crisis
   getCrisisState: () => request('/crisis/state'),
@@ -288,75 +231,28 @@ export const api = {
   acknowledgeCrisis: () => request('/crisis/acknowledge', { method: 'POST' }),
   resolveCrisis: () => request('/crisis/resolve', { method: 'POST' }),
   assessRisk: (text: string) => request('/crisis/assess-risk', { method: 'POST', body: JSON.stringify({ text }) }),
+  checkPatientDiscrepancy: (patientUsername: string) =>
+    request('/discrepancy/check-patient', {
+      method: 'POST',
+      body: JSON.stringify({ patient_username: patientUsername }),
+    }),
   getCrisisElapsed: () => request('/crisis/elapsed'),
-  getCrisisHistory: (username: string) => request(`/crisis/history/${username}`),
   notifyTrustedContact: () => request('/crisis/notify-trusted-contact', { method: 'POST' }),
   trusteeAcknowledge: () => request('/crisis/trustee-acknowledge', { method: 'POST' }),
   trusteeClicked: () => request('/crisis/trustee-clicked', { method: 'POST' }),
 
-  // Coping Toolbox
-  getCopingTools: () => request('/coping-tools'),
-  createCopingTool: (data: { title: string; description?: string; category?: string }) =>
-    request('/coping-tools', { method: 'POST', body: JSON.stringify(data) }),
-  updateCopingTool: (id: number, data: any) => request(`/coping-tools/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  deleteCopingTool: (id: number) => request(`/coping-tools/${id}`, { method: 'DELETE' }),
-  recommendCopingTool: (data: { patient_username: string; title: string; description?: string; category?: string }) =>
-    request('/coping-tools/recommend', { method: 'POST', body: JSON.stringify(data) }),
-  getPatientCopingTools: (username: string) => request(`/coping-tools/patient/${username}`),
-  getSessionReadiness: (username: string) => request(`/agents/session-readiness/${username}`),
-  getWeeklyDigest: () => request('/agents/weekly-digest'),
-  getReflectPrompt: () => request('/agents/reflect-prompt'),
-  getWeeklyTheme: (username: string) => request(`/agents/weekly-theme/${username}`),
-  getNextSessionPrep: (username: string) => request(`/agents/next-session-prep/${username}`),
-  getMoodForecast: () => request('/agents/mood-forecast'),
-  getJournalReframe: (entryId: number) => request(`/agents/journal-reframe/${entryId}`),
-  getEarlyWarning: (username: string) => request(`/agents/early-warning/${username}`),
-  getGoalSuggestions: () => request('/agents/goal-suggestions'),
-
   // Bookings
   createBooking: (data: any) => request('/bookings', { method: 'POST', body: JSON.stringify(data) }),
-  getBookings: (filters?: { status?: string; upcoming?: boolean; past?: boolean; date_from?: string; date_to?: string }) => {
-    const p = new URLSearchParams()
-    if (filters?.status) p.set('status', filters.status)
-    if (filters?.upcoming) p.set('upcoming', 'true')
-    if (filters?.past) p.set('past', 'true')
-    if (filters?.date_from) p.set('date_from', filters.date_from)
-    if (filters?.date_to) p.set('date_to', filters.date_to)
-    const qs = p.toString()
-    return request(`/bookings${qs ? `?${qs}` : ''}`)
-  },
+  getBookings: () => request('/bookings'),
   updateBookingStatus: (id: number, status: string) =>
     request(`/bookings/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }),
   setAvailability: (data: any) => request('/bookings/availability', { method: 'POST', body: JSON.stringify(data) }),
-  getBookingCalendar: (year: number, month: number) => request(`/bookings/calendar?year=${year}&month=${month}`),
-  getNextFreeSlots: (psychUsername: string, count: number = 3) => request(`/bookings/next-free/${psychUsername}?count=${count}`),
-  getWeekSummary: () => request('/patients/me/week-summary'),
-  getMyAvailability: (detailed?: boolean) => request(`/bookings/availability/me${detailed ? '?detailed=true' : ''}`),
-  rescheduleBooking: (id: number, date: string, time: string) =>
-    request(`/bookings/${id}/reschedule`, { method: 'PUT', body: JSON.stringify({ date, time }) }),
+  getMyAvailability: () => request(`/bookings/availability/me`),
   deleteAvailability: (slotId: number) => request(`/bookings/availability/${slotId}`, { method: 'DELETE' }),
-
-  // Followup templates
-  getFollowupTemplates: (category?: string) => request(`/followup-templates${category ? `?category=${category}` : ''}`),
-  createFollowupTemplate: (data: { title: string; description?: string; category?: string; default_due_days?: number }) =>
-    request('/followup-templates', { method: 'POST', body: JSON.stringify(data) }),
-  updateFollowupTemplate: (id: number, data: any) => request(`/followup-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  deleteFollowupTemplate: (id: number) => request(`/followup-templates/${id}`, { method: 'DELETE' }),
-  assignFromTemplate: (id: number, patientUsername: string, dueDate?: string) =>
-    request(`/followup-templates/${id}/assign`, { method: 'POST', body: JSON.stringify({ patient_username: patientUsername, due_date: dueDate || '' }) }),
 
   // Followups
   createFollowup: (data: any) => request('/followups', { method: 'POST', body: JSON.stringify(data) }),
-  getFollowups: (filters?: { status?: string; patient?: string; overdue?: boolean; due_before?: string }) => {
-    const p = new URLSearchParams()
-    if (filters?.status) p.set('status', filters.status)
-    if (filters?.patient) p.set('patient', filters.patient)
-    if (filters?.overdue) p.set('overdue', 'true')
-    if (filters?.due_before) p.set('due_before', filters.due_before)
-    const qs = p.toString()
-    return request(`/followups${qs ? `?${qs}` : ''}`)
-  },
-  getFollowupStats: () => request('/followups/stats'),
+  getFollowups: () => request('/followups'),
   updateFollowup: (id: string, data: any) => request(`/followups/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   uploadFollowupAttachment: (id: string, file: File) => upload(`/followups/${id}/upload`, file),
   uploadFollowupProof: (id: string, file: File) => upload(`/followups/${id}/upload-proof`, file),

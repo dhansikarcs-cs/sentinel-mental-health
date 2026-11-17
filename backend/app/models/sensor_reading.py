@@ -10,9 +10,10 @@ class SensorReading(Base):
     patient_username = Column(String, ForeignKey("patient_profiles.username"), nullable=False)
     device_id = Column(String, default="")
 
-    heart_rate = Column(Integer, default=0)
-    rmssd = Column(Float, default=0.0)
-    sdnn = Column(Float, default=0.0)
-    temperature = Column(Float, default=0.0)
+    # NULL means "not measured". No fabricated defaults or derived values.
+    heart_rate = Column(Integer, nullable=True)
+    rmssd = Column(Float, nullable=True)
+    sdnn = Column(Float, nullable=True)
+    temperature = Column(Float, nullable=True)
 
     logged_at = Column(String, nullable=False)

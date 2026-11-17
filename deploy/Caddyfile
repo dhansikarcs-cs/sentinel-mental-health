@@ -1,0 +1,25 @@
+# Single public entry point for Sentinel.
+# Caddy obtains + renews the Let's Encrypt certificate automatically.
+# Requires: DNS A record for {$DOMAIN} -> this VPS IP, and ports 80/443 open.
+
+# Apex + www. The www CNAME already points at this VPS; without a matching
+# certificate mobile browsers refuse to load https://www.<domain>.
+# Serving both from one site block lets Caddy issue a single SAN certificate
+# covering both names (and keeps one canonical app, no redirect needed).
+{$DOMAIN}, www.{$DOMAIN} {
+	encode gzip
+
+	# API, health probes, WS fan-out and the AI shim all live on the backend.
+	# Caddy's reverse_proxy preserves the full path (so /api/... reaches
+	# FastAPI's /api prefix unchanged) and forwards WebSocket upgrades.
+	# API, health probes, WS fan-out, AI shim and FastAPI's interactive docs.
+	@backend path /api/* /health /health/* /v1/* /docs /docs/* /openapi.json /redoc /redoc/*
+	handle @backend {
+		reverse_proxy sentinel-backend:8000
+	}
+
+	# Everything else (SPA, static assets, service worker) -> nginx.
+	handle {
+		reverse_proxy sentinel-frontend:10000
+	}
+}
