@@ -69,9 +69,13 @@ export default function RingConnectButton() {
     if (busy) return { text: '🔵 Opening the ring picker…', color: 'var(--accent)' }
     if (live.error) return { text: `🔴 ${live.error} — tap to retry.`, color: 'var(--danger)' }
     if (live.running) {
+      const diag = `${live.frames} frame${live.frames === 1 ? '' : 's'}${live.opcodes.length ? ` (${live.opcodes.join(', ')})` : ''}`
       return live.count > 0
         ? { text: `🟢 Collecting — ${live.count} real reading${live.count === 1 ? '' : 's'}${live.lastBpm !== null ? ` · last bpm ${live.lastBpm}` : ''}.`, color: 'var(--ok)' }
-        : { text: '🔵 Connected — waiting for a measurement (wear the ring, sensors against skin).', color: 'var(--accent)' }
+        : { text: `🔵 Connected — ${diag} seen, 0 readings yet. Wear the ring (sensors flat against skin) and keep this tab open.`, color: 'var(--accent)' }
+    }
+    if (live.frames > 0) {
+      return { text: `🟡 Last session: ${live.frames} frames (${live.opcodes.join(', ') || 'none'}) but ${live.count} readings.`, color: 'var(--warn)' }
     }
     return { text: '🔴 Not collecting — tap to start live capture.', color: 'var(--muted)' }
   })()

@@ -4,7 +4,10 @@
  * - Stale-while-revalidate for static assets
  * - Cache busting on new versions
  */
-const VERSION = 'sentinel-pwa-v1.0'
+// Bump on every frontend deploy so cached old bundles are purged on activate.
+// A stale service worker can otherwise keep serving an obsolete index.html +
+// hashed JS indefinitely, which hides new ring-sync behaviour from users.
+const VERSION = 'sentinel-pwa-v2.0'
 const SHELL_CACHE = `${VERSION}-shell`
 const API_CACHE = `${VERSION}-api`
 

@@ -89,7 +89,14 @@ export default function RingConnect({ onSynced }: { onSynced?: () => void }) {
         <div style={{ marginTop: '10px', fontSize: '0.72rem', lineHeight: 1.6, color: 'var(--ok)' }}>
           🔴 Collecting live — {live.count} real reading{live.count === 1 ? '' : 's'} captured
           {live.lastBpm !== null ? ` · last bpm ${live.lastBpm}` : ' · waiting for a measurement (wear the ring, sensors against skin)'}.
+          {' '}{live.frames} BLE frame{live.frames === 1 ? '' : 's'} seen{live.opcodes.length ? ` (${live.opcodes.join(', ')})` : ''}.
           Keep this tab open. Each reading is saved locally and uploaded immediately.
+        </div>
+      )}
+      {!live.running && live.frames > 0 && (
+        <div style={{ marginTop: '10px', fontSize: '0.72rem', lineHeight: 1.6, color: 'var(--warn)' }}>
+          Last session: {live.frames} BLE frames ({live.opcodes.join(', ') || 'none'}) → {live.count} real readings.
+          {live.count === 0 ? ' The ring sent no 06 01 HR frames — check it is worn, charged, and out of its case.' : ''}
         </div>
       )}
       {live.error && !live.running && (

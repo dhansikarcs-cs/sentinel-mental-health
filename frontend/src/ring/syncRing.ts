@@ -87,13 +87,15 @@ export async function syncRingNow(
 
 export interface LiveSyncState {
   running: boolean
-  count: number
+  count: number // genuine readings captured from 06 01 frames
   lastBpm: number | null
+  frames: number // raw BLE frames seen (diagnostic)
+  opcodes: string[] // opcodes seen (diagnostic)
   error: string
 }
 
 let _session: { stop: () => Promise<void> } | null = null
-let _state: LiveSyncState = { running: false, count: 0, lastBpm: null, error: '' }
+let _state: LiveSyncState = { running: false, count: 0, lastBpm: null, frames: 0, opcodes: [], error: '' }
 const _subs = new Set<(s: LiveSyncState) => void>()
 
 function emit() { _subs.forEach((f) => f(_state)) }
@@ -108,26 +110,36 @@ export function getLiveSyncState(): LiveSyncState { return _state }
 
 export async function startLiveSync(): Promise<void> {
   if (_session) return
-  _state = { running: true, count: 0, lastBpm: null, error: '' }
+  _state = { running: true, count: 0, lastBpm: null, frames: 0, opcodes: [], error: '' }
   emit()
   let n = 0
+  const seenOpcodes = new Set<string>()
   try {
-    const session = await startLiveHrStream(async (bpm, rawHex) => {
-      n += 1
-      const seq = seqFor('live', `${rawHex}:${n}`, String(bpm))
-      await enqueueRing([{
-        kind: 'ring',
-        seq,
-        device: DEVICE_ID,
-        payload: { device_id: DEVICE_ID, seq, bpm, timestamp: new Date().toISOString() },
-      }])
-      void flushRingQueue().catch(() => {})
-      _state = { ..._state, count: n, lastBpm: bpm }
-      emit()
-    })
+    const session = await startLiveHrStream(
+      async (bpm, rawHex) => {
+        n += 1
+        const seq = seqFor('live', `${rawHex}:${n}`, String(bpm))
+        await enqueueRing([{
+          kind: 'ring',
+          seq,
+          device: DEVICE_ID,
+          payload: { device_id: DEVICE_ID, seq, bpm, timestamp: new Date().toISOString() },
+        }])
+        void flushRingQueue().catch(() => {})
+        _state = { ..._state, count: n, lastBpm: bpm }
+        emit()
+      },
+      // Every CRC-valid frame is counted so the UI can say WHERE a sync stalled:
+      // 0 frames => GATT/notify problem; frames but no 0601 => ring not worn.
+      (f) => {
+        seenOpcodes.add(f.opcode)
+        _state = { ..._state, frames: _state.frames + 1, opcodes: Array.from(seenOpcodes).sort() }
+        emit()
+      },
+    )
     _session = { stop: session.stop }
   } catch (err) {
-    _state = { running: false, count: n, lastBpm: _state.lastBpm, error: describeRingError(err) }
+    _state = { running: false, count: n, lastBpm: _state.lastBpm, frames: _state.frames, opcodes: Array.from(seenOpcodes).sort(), error: describeRingError(err) }
     emit()
     throw err
   }
