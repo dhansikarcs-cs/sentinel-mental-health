@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { isWebBluetoothSupported } from '../ring/webBluetooth'
+import { isWebBluetoothSupported, bluetoothDiagnostics } from '../ring/webBluetooth'
 import {
   startLiveSync,
   stopLiveSync,
@@ -29,6 +29,7 @@ export default function RingConnect({ onSynced }: { onSynced?: () => void }) {
   const [pending, setPending] = useState(0)
   const [live, setLive] = useState<LiveSyncState>(getLiveSyncState())
   const [busy, setBusy] = useState(false)
+  const [bootDiag] = useState(() => bluetoothDiagnostics().line)
   const supported = isWebBluetoothSupported()
 
   useEffect(() => {
@@ -102,11 +103,9 @@ export default function RingConnect({ onSynced }: { onSynced?: () => void }) {
       {live.error && !live.running && (
         <div style={{ marginTop: '10px', fontSize: '0.72rem', lineHeight: 1.5, color: 'var(--danger)' }}>{live.error}</div>
       )}
-      {live.diag && (
-        <div style={{ marginTop: '10px', fontSize: '0.66rem', lineHeight: 1.5, color: 'var(--faint)', wordBreak: 'break-word' }}>
-          🔎 {live.diag}
-        </div>
-      )}
+      <div style={{ marginTop: '10px', fontSize: '0.66rem', lineHeight: 1.5, color: 'var(--faint)', wordBreak: 'break-word' }}>
+        🔎 {live.diag || bootDiag}
+      </div>
       {pending > 0 && (
         <div style={{ marginTop: '10px', fontSize: '0.7rem', color: 'var(--warn)' }}>
           📡 {pending} measurement{pending === 1 ? '' : 's'} waiting to upload — retrying automatically.

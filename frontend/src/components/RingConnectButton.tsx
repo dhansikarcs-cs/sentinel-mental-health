@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { isWebBluetoothSupported } from '../ring/webBluetooth'
+import { isWebBluetoothSupported, bluetoothDiagnostics } from '../ring/webBluetooth'
 import {
   startLiveSync,
   stopLiveSync,
@@ -30,6 +30,8 @@ export default function RingConnectButton() {
   const [pending, setPending] = useState(0)
   const [live, setLive] = useState<LiveSyncState>(getLiveSyncState())
   const [busy, setBusy] = useState(false)
+  // Computed synchronously on mount so the diagnostic is visible BEFORE any click.
+  const [bootDiag] = useState(() => bluetoothDiagnostics().line)
 
   useEffect(() => {
     void getRingQueueCount().then(setPending)
@@ -99,11 +101,9 @@ export default function RingConnectButton() {
       <div style={{ fontSize: '0.625rem', lineHeight: 1.5, marginTop: '6px', color: stateLine.color }}>
         {stateLine.text}
       </div>
-      {live.diag && (
-        <div style={{ fontSize: '0.575rem', lineHeight: 1.5, marginTop: '6px', color: 'var(--faint)', wordBreak: 'break-word' }}>
-          🔎 {live.diag}
-        </div>
-      )}
+      <div style={{ fontSize: '0.575rem', lineHeight: 1.5, marginTop: '6px', color: 'var(--faint)', wordBreak: 'break-word' }}>
+        🔎 {live.diag || bootDiag}
+      </div>
       <div style={{ fontSize: '0.6rem', lineHeight: 1.5, marginTop: '6px', color: 'var(--faint)' }}>
         Saving to <strong>@{getUser()?.username || 'this account'}</strong>. This ring doesn't store history, so readings are captured live while this tab stays open. Chrome/Edge over HTTPS with the ring nearby — the server has no Bluetooth. Safari/Firefox/iOS can't use Web Bluetooth. Android needs Location ON + "Nearby devices" permission for Chrome. In the picker choose the "R30 PRO" entry.
       </div>
